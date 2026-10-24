@@ -1,0 +1,3021 @@
+local theme = {
+  accent  = {0.25,0.72,1.00,1}, accent2={0.42,0.48,1.00,1}, accent2_base={0.42,0.48,1.00,1},
+  base    = {0.020,0.027,0.055,1}, base2={0.012,0.018,0.040,1},
+  panel   = {0.055,0.075,0.125,1}, panel_hi={0.085,0.110,0.175,1},
+  field   = {0.105,0.135,0.200,1}, field_hi={0.140,0.180,0.260,1},
+  rail    = {0.110,0.145,0.210,1}, line={0.200,0.290,0.420,1},
+  text    = {0.87,0.93,1.00,1}, sub={0.48,0.60,0.74,1}, faint={0.30,0.40,0.54,1},
+  ok      = {0.25,0.75,0.85,1}, bad={0.90,0.35,0.50,1},
+  round=4, opacity=1.0,
+}
+local function a(c,al) return {c[1],c[2],c[3],(c[4] or 1)*(al or 1)*theme.opacity} end
+local function mix(c1,c2,t) return {c1[1]+(c2[1]-c1[1])*t,c1[2]+(c2[2]-c1[2])*t,c1[3]+(c2[3]-c1[3])*t,(c1[4] or 1)+((c2[4] or 1)-(c1[4] or 1))*t} end
+local function clamp(v,lo,hi) return v<lo and lo or (v>hi and hi or v) end
+local ATAN2 = math.atan2 or function(y,x) return math.atan(y,x) end
+local function ease_out(t) t=clamp(t,0,1); local f=1-t; return 1-f*f*f end
+local function hsv(h,s,v) h=(h%1)*6; local i=math.floor(h); local f=h-i; local p=v*(1-s); local q=v*(1-s*f); local u=v*(1-s*(1-f))
+  if i==0 then return{v,u,p,1} elseif i==1 then return{q,v,p,1} elseif i==2 then return{p,v,u,1} elseif i==3 then return{p,q,v,1} elseif i==4 then return{u,p,v,1} else return{v,p,q,1} end end
+local function to_hsv(c) local r,g,b=c[1],c[2],c[3]; local mx=math.max(r,g,b); local mn=math.min(r,g,b); local d=mx-mn; local h=0
+  if d>0 then if mx==r then h=((g-b)/d)%6 elseif mx==g then h=(b-r)/d+2 else h=(r-g)/d+4 end h=h/6 end
+  return h, (mx==0 and 0 or d/mx), mx end
+
+local _dt=0.016
+local anim={}
+local function approach(k,target,spd) local v=anim[k]; if v==nil then v=target end
+  v=v+(target-v)*clamp(_dt*(spd or 12),0,1); anim[k]=v; return v end
+
+local function call(fn,...) if type(fn)~="function" then return nil end local ok,r=pcall(fn,...) if ok then return r end return nil end
+local function scr() local w,h=draw.GetScreenSize(); return w or 1920, h or 1080 end
+local function mouse_pos() local x,y=utility.GetMousePos(); return x or 0, y or 0 end
+local function now() return utility.GetTime and utility.GetTime() or os.clock() end
+local function W2S(x,y,z) local sx,sy,v=draw.WorldToScreen(x,y,z); return sx,sy,v end
+-- IsKeyDown is documented as returning a boolean, but the binding is free to
+-- hand back a number instead, and a strict "== true" would then read every
+-- key as released - which would silently disable the aimbot, the silent aim
+-- and the whole menu at the same time. anything that is not nil, false or
+-- zero counts as down. pcall because a bad vk must never take the frame down.
+local function ekey(vk)
+  local ok,r=pcall(input.IsKeyDown,vk)
+  if not ok or r==nil or r==false or r==0 then return false end
+  return true
+end
+local function chroma() return hsv(now()*0.15,0.7,1) end
+
+local VK={[0x01]="LMB",[0x02]="RMB",[0x04]="MMB",[0x05]="M4",[0x06]="M5",[0x08]="BACK",[0x09]="TAB",
+  [0x0D]="ENTER",[0x10]="SHIFT",[0x11]="CTRL",[0x12]="ALT",[0x1B]="ESC",[0x20]="SPACE",
+  [0x25]="LEFT",[0x26]="UP",[0x27]="RIGHT",[0x28]="DOWN",[0x2D]="INS",[0x2E]="DEL",
+  [0xA0]="LSHIFT",[0xA1]="RSHIFT",[0x43]="C",[0x46]="F",[0x51]="Q",[0x45]="E",[0x58]="X",[0x56]="V"}
+for i=0,9 do VK[0x30+i]=tostring(i) end
+for i=0,25 do VK[0x41+i]=string.char(65+i) end
+for i=1,12 do VK[0x6F+i]="F"..i end
+local function vkname(vk) if not vk or vk==0 then return "NONE" end return VK[vk] or string.format("0x%02X",vk) end
+
+local cfg={}; local col={}; local bind={}
+-- set by every widget that changes a setting. the config engine watches it and
+-- writes the profile out (debounced) instead of diffing ~90 values per frame.
+local cfg_dirty=false
+-- the config engine lives at the bottom of the file, but the slot combo needs
+-- to load a profile the moment it is clicked, so it is declared up here.
+local cfg_load
+
+local SCHEMA = {
+{name="Aimbot", groups={
+  {name="Camera Aimbot", col=1, items={
+    {t="toggle",id="aim_on",label="Enable Aimbot"},
+    {t="bind",id="aim_toggle",label="Toggle Key",default=0x46},
+    {t="bind",id="aim_key",label="Aim Key",default=0x02},
+    {t="combo",id="aim_bone",label="Bone",items={"Head","Chest","Pelvis","Arms","Legs","Closest"},default=1},
+    {t="combo",id="aim_priority",label="Target Priority",items={"Crosshair","Distance","Low HP"},default=1},
+    {t="combo",id="aim_fovstyle",label="FOV Style",items={"Circle","Box","Diamond","Corner Box"},default=1},
+    {t="slider",id="aim_fov",label="FOV",min=5,max=900,default=160,suf="px"},
+    {t="slider",id="aim_smooth",label="Smoothing",min=1,max=25,default=8},
+    {t="slider",id="aim_dz",label="Deadzone",min=0,max=20,default=0,suf="px"},
+    {t="toggle",id="aim_team",label="Team Check",default=true},
+    {t="toggle",id="aim_wall",label="Wall Check",default=false},
+    {t="toggle",id="aim_drone",label="Target Utility",default=false},
+    {t="toggle",id="aim_playerover",label="Players Over Utility",default=false},
+    {t="toggle",id="aim_tline",label="Target Line",default=true},
+    {t="toggle",id="aim_fovcircle",label="Show FOV Circle",default=true},
+    {t="color",id="c_tline",label="Line Color"},
+    {t="color",id="c_fov",label="FOV Color"},
+    {t="toggle",id="aim_fovchroma",label="Chroma FOV",default=false},
+  }},
+  {name="Silent Aim", col=2, items={
+    {t="toggle",id="silent_on",label="Silent Aim"},
+    {t="bind",id="silent_toggle",label="Toggle Key",default=0x48},
+    {t="bind",id="silent_key",label="Silent Key",default=0x02},
+    {t="toggle",id="silent_always",label="Always On (no key)"},
+    {t="combo",id="silent_bone",label="Bone",items={"Head","Chest","Pelvis","Arms","Legs","Closest"},default=1},
+    {t="combo",id="silent_priority",label="Target Priority",items={"Crosshair","Distance","Low HP"},default=1},
+    {t="combo",id="silent_fovstyle",label="FOV Style",items={"Circle","Box","Diamond","Corner Box"},default=1},
+    {t="slider",id="silent_fov",label="FOV",min=5,max=900,default=220,suf="px"},
+    {t="toggle",id="silent_team",label="Team Check",default=true},
+    {t="toggle",id="silent_wall",label="Wall Check",default=false},
+    {t="toggle",id="silent_drone",label="Target Utility",default=false},
+    {t="toggle",id="silent_playerover",label="Players Over Utility",default=false},
+    {t="toggle",id="silent_magic",label="Magic Bullet (soft cover)",default=false},
+    {t="toggle",id="silent_vis",label="Show FOV Circle",default=true},
+    {t="toggle",id="silent_tline",label="Target Line",default=true},
+    {t="color",id="c_silent",label="Line Color"},
+    {t="toggle",id="silent_fovchroma",label="Chroma FOV",default=false},
+  }},
+}},
+{name="Trigger", groups={
+  {name="Triggerbot", col=1, items={
+      {t="toggle",id="trig_on",label="Enable Triggerbot"},
+      {t="bind",id="trig_toggle",label="Toggle Key",default=0x54},
+      {t="toggle",id="trig_always",label="Always On (no key)",default=true},
+      {t="bind",id="trig_key",label="Hold Key",default=0x02},
+      {t="slider",id="trig_fov",label="Crosshair Radius",min=2,max=80,default=6,suf="px"},
+      {t="combo",id="trig_bone",label="Hitbox",items={"Head","Chest","Pelvis","Arms","Legs","Any"},default=6},
+      {t="slider",id="trig_react",label="Reaction Delay",min=0,max=1000,default=100,suf="ms"},
+      {t="slider",id="trig_delay",label="Click Delay",min=0,max=400,default=50,suf="ms"},
+      {t="toggle",id="trig_wall",label="Wall Check",default=true},
+      {t="toggle",id="trig_team",label="Team Check",default=true},
+      {t="toggle",id="trig_drone",label="Target Utility",default=false},
+      {t="toggle",id="trig_show",label="Show Radius",default=true},
+      {t="color",id="c_trig",label="Radius Color"},
+  }},
+}},
+{name="ESP", groups={
+  {name="Players", col=1, items={
+    {t="toggle",id="esp_on",label="Enable ESP",default=true},
+    {t="bind",id="esp_toggle",label="Toggle Key",default=0x56},
+    {t="slider",id="esp_alpha",label="Opacity",min=25,max=100,default=100,suf="%"},
+    {t="toggle",id="esp_box",label="Box",default=false},
+    {t="combo",id="esp_boxstyle",label="Box Style",items={"Corner","Full","Filled"},default=1},
+    {t="toggle",id="esp_name",label="Name",default=true},
+    {t="toggle",id="esp_dist",label="Distance",default=true},
+    {t="toggle",id="esp_hp",label="Health Bar",default=true},
+    {t="toggle",id="esp_weapon",label="Weapon",default=true},
+    {t="toggle",id="esp_team",label="Show Teammates",default=false},
+  }},
+  {name="Extras", col=2, items={
+    {t="toggle",id="esp_skel",label="Skeleton",default=true},
+    {t="toggle",id="esp_head",label="Head Dot",default=true},
+    {t="combo",id="esp_head_style",label="Head Dot Style",items={"Fill","Circle"},default=2},
+    {t="slider",id="esp_head_size",label="Head Dot Size",min=1,max=6,default=3,suf="px"},
+    {t="toggle",id="esp_hat",label="China Hat",default=false},
+    {t="slider",id="esp_hat_size",label="Hat Size",min=40,max=220,default=100,suf="%"},
+    {t="toggle",id="esp_tracer",label="Tracers"},
+    {t="combo",id="esp_tracer_from",label="Tracer Origin",items={"Bottom","Center","Top"},default=1},
+    {t="toggle",id="esp_off",label="Off-screen Arrows"},
+    {t="slider",id="esp_maxdist",label="Max Distance",min=0,max=3000,default=3000},
+    {t="slider",id="esp_textsize",label="Text Size",min=9,max=18,default=12},
+  }},
+  {name="Colors", col=3, items={
+    {t="color",id="c_enemy",label="Player"},
+    {t="color",id="c_name",label="Name"},
+    {t="color",id="c_tracer",label="Tracer"},
+    {t="color",id="c_hat",label="Hat"},
+    {t="toggle",id="esp_chroma",label="Chroma Boxes"},
+  }},
+}},
+{name="World", groups={
+  {name="Objective ESP", col=1, items={
+    {t="toggle",id="obj_on",label="Enable Objective ESP",default=true},
+    {t="toggle",id="obj_bomb",label="Bomb / Defuser",default=true},
+    {t="toggle",id="obj_traps",label="Traps & Mines",default=true},
+    {t="toggle",id="obj_breach",label="Breach & Explosives",default=true},
+    {t="toggle",id="obj_cam",label="Cameras & Drones",default=true},
+    {t="toggle",id="obj_nade",label="Grenades",default=true},
+    {t="toggle",id="obj_util",label="Utility / Shields",default=true},
+    {t="toggle",id="obj_outline",label="3D Box",default=true},
+    {t="toggle",id="obj_names",label="Show Names",default=true},
+    {t="toggle",id="obj_dist",label="Show Distance",default=true},
+    {t="slider",id="obj_alpha",label="Opacity",min=25,max=100,default=100,suf="%"},
+    {t="slider",id="obj_textsize",label="Text Size",min=9,max=18,default=12},
+    {t="slider",id="obj_maxdist",label="Max Distance",min=0,max=3000,default=3000},
+  }},
+  {name="Objective Colors", col=2, items={
+    {t="color",id="c_bomb",label="Bomb"},
+    {t="color",id="c_claymore",label="Traps"},
+    {t="color",id="c_breach",label="Breach"},
+    {t="color",id="c_cam",label="Cameras"},
+    {t="color",id="c_nade",label="Grenades"},
+    {t="color",id="c_util",label="Utility"},
+  }},
+  {name="Radar", col=3, items={
+    {t="toggle",id="rad_on",label="Enable Radar"},
+    {t="toggle",id="rad_team",label="Team Check",default=true},
+    {t="slider",id="rad_size",label="Size",min=90,max=280,default=160},
+    {t="slider",id="rad_range",label="Range",min=50,max=500,default=180,suf="st"},
+    {t="slider",id="rad_x",label="X Pos",min=0,max=100,default=88,suf="%"},
+    {t="slider",id="rad_y",label="Y Pos",min=0,max=100,default=8,suf="%"},
+    {t="slider",id="rad_alpha",label="Opacity",min=20,max=100,default=80,suf="%"},
+  }},
+  {name="Flank Alert", col=2, items={
+    {t="toggle",id="alert_on",label="Behind-You Alert"},
+    {t="slider",id="alert_dist",label="Range",min=15,max=120,default=45,suf="st"},
+    {t="note",label="Warns when someone is close"},
+    {t="note",label="and behind you."},
+  }},
+}},
+{name="Misc", groups={
+  {name="Crosshair", col=1, items={
+    {t="toggle",id="xh_on",label="Custom Crosshair"},
+    {t="combo",id="xh_style",label="Style",items={"Cross","Dot","Circle","T","Star of David"},default=1},
+    {t="slider",id="xh_size",label="Size",min=4,max=30,default=10},
+    {t="slider",id="xh_gap",label="Gap",min=0,max=16,default=4},
+    {t="slider",id="xh_thick",label="Thickness",min=1,max=5,default=2},
+    {t="toggle",id="xh_dot",label="Center Dot"},
+    {t="toggle",id="xh_spin",label="Spin"},
+    {t="slider",id="xh_speed",label="Spin Speed",min=-360,max=360,default=90,suf=" deg/s"},
+    {t="color",id="c_xh",label="Color"},
+  }},
+}},
+{name="Config", groups={
+  {name="Profile", col=1, items={
+    {t="combo",id="cfg_slot",label="Slot",items={"1","2","3"},default=1},
+    {t="button",id="cfg_save",label="Save Config"},
+    {t="button",id="cfg_load",label="Load Config"},
+    {t="button",id="cfg_reset",label="Reset to Defaults"},
+    {t="toggle",id="cfg_auto",label="Auto Save",default=true},
+    {t="note",label="Writes ego_config_<slot>.cfg and keeps"},
+    {t="note",label="a copy in the session as a fallback."},
+  }},
+}},
+{name="Settings", groups={
+  {name="Interface", col=1, items={
+    {t="bind",id="menu_key",label="Menu Key",default=0xA1},
+    {t="color",id="c_accent",label="Accent"},
+    {t="toggle",id="accent_chroma",label="Chroma Accent",default=false},
+    {t="slider",id="ui_opacity",label="Menu Opacity",min=50,max=100,default=100,suf="%"},
+    {t="toggle",id="hud_mark",label="Watermark",default=true},
+    {t="toggle",id="hud_keys",label="Keybind List",default=true},
+    {t="toggle",id="hud_bar",label="Feature Bar",default=true},
+    {t="note",label="Drag HUD panels while the menu"},
+    {t="note",label="is open."},
+    {t="button",id="unload",label="Unload Ego"},
+  }},
+} },
+}
+
+local DEF_COL={ c_fov={0.45,0.78,1,1}, c_tline={0.45,0.78,1,1},
+  c_trig={1,0.55,0.35,1},
+  c_enemy={0.95,0.35,0.4,1},
+  c_name={1,1,1,1}, c_tracer={0.95,0.35,0.4,1}, c_bomb={1,0.8,0.2,1},
+  c_claymore={1,0.35,0.35,1}, c_alarm={0.6,1,0.5,1}, c_xh={1,1,1,1}, c_accent={0.25,0.72,1.0,1},
+  c_silent={0.6,1.0,0.55,1}, c_breach={1,0.45,0.3,1}, c_cam={0.5,0.85,1,1}, c_nade={1,0.85,0.25,1},
+  c_util={0.6,0.6,0.9,1}, c_hat={0.99,0.78,0.36,1} }
+
+for _,tab in ipairs(SCHEMA) do for _,g in ipairs(tab.groups) do for _,it in ipairs(g.items) do
+  if it.t=="toggle" then cfg[it.id]=it.default or false
+  elseif it.t=="slider" then cfg[it.id]=it.default or it.min
+  elseif it.t=="combo" then cfg[it.id]=it.default or 1
+  elseif it.t=="bind" then bind[it.id]=it.default or 0
+  elseif it.t=="color" then col[it.id]={DEF_COL[it.id][1],DEF_COL[it.id][2],DEF_COL[it.id][3],DEF_COL[it.id][4]} end
+end end end
+
+local ui={ open=true, x=140,y=90,w=600,h=460, tab=1,
+  drag=nil, capture=nil, capture_ok=false, picker=nil,
+  m={x=0,y=0,down=false,was=false,click=false}, menu_edge=false, tog_edge=false,
+  tog_edge_s=false, tog_edge_e=false, appear=0 }
+local hud_keys_pos={x=12,y=100}
+-- watermark and feature bar positions. nil means "use the anchored default"
+-- (top-right / bottom-centre), so an untouched panel still follows the screen
+-- size; the moment it is dragged its position is stored here and kept.
+local hud_pos={}
+
+local function ts(s,sz) local w,h=draw.GetTextSize(s,sz or 12); return w or 0, h or 12 end
+local function tmid(x,y,h,s,c,sz) sz=sz or 12; local _,th=ts(s,sz); draw.Text(x,y+(h-th)*0.5,s,c,sz) end
+local function trt(xr,y,h,s,c,sz) sz=sz or 12; local tw,th2=ts(s,sz); draw.Text(xr-tw,y+(h-th2)*0.5,s,c,sz) return tw end
+
+local function inside(x,y,w,h) local m=ui.m return m.x>=x and m.x<=x+w and m.y>=y and m.y<=y+h end
+local function interactable() return ui.appear>0.9 and not ui.picker end
+local ROWH={toggle=26,slider=34,combo=28,bind=26,color=26,button=30,note=15}
+local function row_h(it) return ROWH[it.t] or 24 end
+
+-- these two are called by the widget functions below, so they have to be
+-- declared before them. draw_menu is pcall'd, so a nil call here used to fail
+-- silently and take out the rest of the frame.
+-- soft outer glow: a few fading shells behind an element
+local function glow(x,y,w,h,c,spread)
+  for i=(spread or 3),1,-1 do draw.RectFilled(x-i*1.5,y-i*1.5,w+i*3,h+i*3, a(c,0.05), 2) end
+end
+-- thick line segment as a convex quad (PolyFilled needs convex winding)
+local function seg_quad(x1,y1,x2,y2,t)
+  local dx,dy=x2-x1,y2-y1
+  local len=math.sqrt(dx*dx+dy*dy)
+  if len<0.001 then return nil end
+  local nx,ny=-dy/len*t*0.5, dx/len*t*0.5
+  return {{x1+nx,y1+ny},{x2+nx,y2+ny},{x2-nx,y2-ny},{x1-nx,y1-ny}}
+end
+-- stroke that thins and dims along its length, so a bracket fades outward
+-- from its vertex instead of ending in a flat cut
+local function taper_seg(x1,y1,x2,y2,t,c,steps)
+  if not draw.PolyFilled then
+    draw.RectFilled(x1-t*0.5,y1-t*0.5,math.abs(x2-x1)+t,math.abs(y2-y1)+t,c,0); return
+  end
+  steps=steps or 8
+  for i=0,steps-1 do
+    local u0,u1=i/steps,(i+1)/steps
+    local q=seg_quad(x1+(x2-x1)*u0, y1+(y2-y1)*u0,
+                     x1+(x2-x1)*u1, y1+(y2-y1)*u1, t*(1-u0*0.6))
+    if q then pcall(draw.PolyFilled, q, {c[1],c[2],c[3],(c[4] or 1)*(1-u0*0.72)}) end
+  end
+end
+-- HUD-style corner brackets: each arm tapers and fades outward from a lit
+-- vertex block, so the frame reads as lit from the top. bottom corners take a
+-- dimmer tone by default.
+local function corners(x,y,w,h,len,c,th,cb)
+  th=th or 2; len=len or 11; cb=cb or c
+  local vs=th*1.8
+  local function arm(vx,vy,tx,ty,tone)
+    taper_seg(vx,vy,tx,ty,th*1.7,tone)
+    draw.RectFilled(vx-th*0.6, vy-th*0.6, vs, vs, tone, 1)
+  end
+  arm(x+2, y+th*0.5, x+len, y+th*0.5, c)
+  arm(x+th*0.5, y+2, x+th*0.5, y+len, c)
+  arm(x+w-2, y+th*0.5, x+w-len, y+th*0.5, c)
+  arm(x+w-th*0.5, y+2, x+w-th*0.5, y+len, c)
+  arm(x+2, y+h-th*0.5, x+len, y+h-th*0.5, cb)
+  arm(x+th*0.5, y+h-2, x+th*0.5, y+h-len, cb)
+  arm(x+w-2, y+h-th*0.5, x+w-len, y+h-th*0.5, cb)
+  arm(x+w-th*0.5, y+h-2, x+w-th*0.5, y+h-len, cb)
+end
+-- vertical gradient
+local function grad_v(x,y,w,h,c1,c2,steps) steps=steps or 12; local sh=h/steps
+  for i=0,steps-1 do draw.RectFilled(x,y+i*sh,w,sh+1,mix(c1,c2,i/(steps-1)),0) end end
+
+local function w_toggle(it,x,y,w)
+  local top=26; local v=cfg[it.id]
+  if inside(x,y,w,top) and ui.m.click and interactable() then cfg[it.id]=not v; cfg_dirty=true; ui.m.click=false end
+  local hot=inside(x,y,w,top)
+  tmid(x,y,top,it.label, a(theme.text, v and 1 or 0.8),13)
+  local bs=16; local bx,by=x+w-bs,y+(top-bs)*0.5
+  local rv=approach("tg"..it.id, v and 1 or 0, 18)
+  if hot and v==false then draw.RectFilled(x,y,w,top, {1,1,1,0.02},0) end
+  if v then glow(bx,by,bs,bs, theme.accent, 2) end
+  draw.RectFilled(bx,by,bs,bs, a(mix(theme.field,theme.accent,rv*0.9),1), 2)
+  draw.Rect(bx,by,bs,bs, a(mix(theme.line,theme.accent,rv),1), 2, 1)
+  if rv>0.02 then
+    local pad=3; local s=(bs-pad*2)*rv; local ox,oy=bx+pad,by+pad
+    local ck={ seg_quad(ox,oy+s*0.50, ox+s*0.40, oy+s*0.88, s*0.24),
+               seg_quad(ox+s*0.40, oy+s*0.88, ox+s, oy+s*0.14, s*0.24) }
+    local cc=a(theme.base, rv)
+    for _,q in ipairs(ck) do
+      if q then
+        if draw.PolyFilled then pcall(draw.PolyFilled, q, cc)
+        else draw.RectFilled(ox,oy+s*0.5,s*0.4,s*0.38, cc, 0) end
+      end
+    end
+  end
+  return top
+end
+local function w_slider(it,x,y,w)
+  local top=34; local v=cfg[it.id]
+  tmid(x,y,16,it.label, a(theme.sub,1),13)
+  local disp=string.format("%.0f",v)..(it.suf and (" "..it.suf) or ""); local dw=ts(disp,12)
+  draw.Text(x+w-dw,y+2,disp, a(theme.text,1),12)
+  local ty2,th=y+21,4
+  draw.RectFilled(x,ty2,w,th, a(theme.rail,1), 1)
+  for i=0,4 do draw.RectFilled(x+w*(i/4), ty2+th+2, 1, 3, a(theme.line,0.65), 0) end
+  local f=clamp((v-it.min)/(it.max-it.min),0,1); local fill=approach("sl"..it.id,f,18)
+  if w*fill>1 then grad_v(x,ty2,w*fill,th, theme.accent, theme.accent2, 8) end
+  local ks=10; local kx=x+w*fill-ks*0.5; local ky=ty2+th*0.5-ks*0.5
+  glow(kx,ky,ks,ks, mix(theme.accent,theme.accent2,0.5), 2)
+  local mid=mix(theme.accent,theme.accent2,0.5)
+  if draw.PolyFilled then pcall(draw.PolyFilled, {{kx+ks*0.5,ky},{kx+ks,ky+ks*0.5},{kx+ks*0.5,ky+ks},{kx,ky+ks*0.5}}, a(theme.text,1))
+  else draw.RectFilled(kx,ky,ks,ks, a(theme.text,1), 2) end
+  if inside(x,y,w,top) and ui.m.click and not ui.drag and interactable() then ui.drag={k="slider",id=it.id,x=x,w=w,min=it.min,max=it.max} end
+  if ui.drag and ui.drag.k=="slider" and ui.drag.id==it.id then
+    if ui.m.down then local nv=math.floor(it.min+clamp((ui.m.x-x)/w,0,1)*(it.max-it.min)+0.5); if nv~=cfg[it.id] then cfg[it.id]=nv; cfg_dirty=true end else ui.drag=nil end
+  end
+  return top
+end
+local function w_combo(it,x,y,w)
+  local top=28; local bw=math.min(130, math.floor(w*0.52)); local bh=22; local bx,by=x+w-bw,y+(top-bh)*0.5
+  tmid(x,y,top,it.label, a(theme.sub,1),13)
+  local hot=inside(bx,by,bw,bh) and interactable()
+  draw.RectFilled(bx,by,bw,bh, a(mix(theme.field,theme.field_hi,hot and 1 or 0),1),2)
+  draw.Rect(bx,by,bw,bh, a(hot and theme.accent or theme.line, hot and 0.7 or 1), 2, 1)
+  tmid(bx+8,by,bh, it.items[cfg[it.id]] or "?", a(theme.text,1),12)
+  local ax0,ay0=bx+bw-15, by+bh*0.5-2
+  for i=0,2 do
+    draw.RectFilled(ax0+i*2, ay0+i*2, 1.5, 1.5, a(theme.accent,0.8), 0)
+    draw.RectFilled(ax0+i*2, ay0+7-i*2, 1.5, 1.5, a(theme.accent,0.8), 0)
+  end
+  if hot and ui.m.click then ui.picker={combo=it.id,items=it.items,x=bx,y=by+bh+2,w=bw} ui.m.click=false end
+  return top
+end
+local function w_bind(it,x,y,w)
+  local top=26; local cap=ui.capture==it.id; local label=cap and "..." or vkname(bind[it.id])
+  local tw=ts(label,11); local bw=math.max(40,tw+16); local bx,by,bh=x+w-bw,y+(top-18)*0.5,18
+  tmid(x,y,top,it.label, a(theme.text,0.9),13)
+  local hot=inside(bx,by,bw,bh) and interactable()
+  draw.RectFilled(bx,by,bw,bh, a(cap and theme.accent or mix(theme.field,theme.field_hi,hot and 1 or 0),1),2)
+  draw.Rect(bx,by,bw,bh, a(hot and theme.accent or theme.line, hot and 0.7 or 1), 2, 1)
+  tmid(bx+8,by,bh,label, a(cap and {1,1,1,1} or theme.text,1),11)
+  if hot and ui.m.click then ui.capture=it.id; ui.capture_ok=false; ui.m.click=false end
+  return top
+end
+-- checkerboard behind a color chip. without it a semi transparent color
+-- reads as a darker solid and the alpha slider looks like it does nothing.
+local function swatch_checker(x,y,w,h,c1,c2,s)
+  s=s or 4
+  local nx=math.floor(w/s); local ny=math.floor(h/s)
+  for i=0,nx-1 do for j=0,ny-1 do
+    draw.RectFilled(x+i*s,y+j*s,s,s,((i+j)%2==0) and c1 or c2,0)
+  end end
+end
+local PICKER_W,PICKER_H=250,230
+-- quick-pick palette. fixed table so the picker does not allocate one per frame.
+local PRESETS={{1,1,1,1},{0.99,0.42,0.45,1},{1,0.62,0.2,1},{1,0.87,0.3,1},{0.55,0.97,0.5,1},
+  {0.35,0.95,0.88,1},{0.45,0.78,1,1},{0.62,0.56,1,1},{0.9,0.52,1,1},{0.62,0.69,0.8,1}}
+local function w_color(it,x,y,w)
+  local top=28; local sw,sh=46,18; local sx,sy=x+w-sw,y+(top-sh)*0.5
+  tmid(x,y,top,it.label, a(theme.text,0.9),13)
+  local c=col[it.id] or {1,1,1,1}
+  -- "over" must NOT go through interactable(): that helper returns false while
+  -- a picker is open, which would make every other swatch unclickable once a
+  -- picker was opened. the menu only counts as live once it has faded in.
+  local over=inside(sx-4,y,sw+8,top)
+  local hot=over and ui.appear>0.9
+  swatch_checker(sx,sy,sw,sh,{0.13,0.15,0.20,1},{0.08,0.09,0.13,1},4)
+  -- top-down sheen so the chip reads as a lit surface instead of a flat block
+  local al=(c[4] or 1)*(theme.opacity or 1)
+  grad_v(sx,sy,sw,sh,
+    {c[1]+(1-c[1])*0.26,c[2]+(1-c[2])*0.26,c[3]+(1-c[3])*0.26,al},
+    {c[1]*0.70,c[2]*0.70,c[3]*0.70,al}, 12)
+  draw.Rect(sx,sy,sw,sh, a(hot and theme.accent or theme.line, hot and 0.95 or 1), 3, 1)
+  if hot then glow(sx,sy,sw,sh, theme.accent, 2) end
+  if hot and ui.m.click then
+    local h,s,v=to_hsv(c)
+    local scw,sch=scr()
+    ui.picker={color=it.id,h=h,s=s,v=v,al=c[4] or 1,
+      x=clamp(sx-160,8,scw-PICKER_W-8), y=clamp(sy+sh+10,8,sch-PICKER_H-8)}
+    ui.m.click=false
+  end
+  return top
+end
+local function w_button(it,x,y,w)
+  local top=30; local bh=24; local by=y+(top-bh)*0.5
+  local hot=inside(x,by,w,bh) and interactable()
+  local danger=(it.id=="unload")
+  local tone=danger and theme.bad or theme.accent
+  draw.RectFilled(x,by,w,bh, a(mix(theme.field,tone,hot and 0.28 or 0),1),2)
+  draw.Rect(x,by,w,bh, a(hot and tone or theme.line, hot and 0.9 or 1), 2, 1)
+  local tw=ts(it.label,12); tmid(x+(w-tw)*0.5,by,bh,it.label, a(hot and tone or theme.text,1),12)
+  if hot and ui.m.click then ui.m.click=false; if it._cb then it._cb() end end
+  return top
+end
+local function w_note(it,x,y,w) tmid(x,y,15,it.label, a(theme.faint,1),11); return 15 end
+local WI={toggle=w_toggle,slider=w_slider,combo=w_combo,bind=w_bind,color=w_color,button=w_button,note=w_note}
+
+local function grad_h(x,y,w,h,c1,c2,steps) steps=steps or 20; local sw=w/steps
+  for i=0,steps-1 do draw.RectFilled(x+i*sw,y,sw+1,h,mix(c1,c2,i/(steps-1)),0) end end
+local function picker_draw()
+  local p=ui.picker; if not p then return end
+  if p.combo then
+    local ph=#p.items*24+6
+    if ui.m.click then if inside(p.x,p.y,p.w,ph) then local idx=math.floor((ui.m.y-p.y-3)/24)+1; if idx>=1 and idx<=#p.items then
+      cfg[p.combo]=idx
+      if p.combo=="cfg_slot" then
+        -- picking a slot pulls that profile in right away
+        if cfg_load(idx,true) then pcall(function() notify.Success("Slot "..idx.." loaded","",2) end)
+        else pcall(function() notify.Warning("Slot "..idx.." is empty","settings are unchanged",2) end) end
+      else cfg_dirty=true end
+    end end ui.picker=nil; ui.m.click=false end
+    draw.RectFilled(p.x,p.y,p.w,ph, a(theme.panel_hi,1),2); draw.Rect(p.x,p.y,p.w,ph,a(theme.accent,0.6),2,1)
+    for i,item in ipairs(p.items) do local iy=p.y+3+(i-1)*24; local hot=inside(p.x,iy,p.w,24)
+      if hot then draw.RectFilled(p.x+2,iy,p.w-4,24,a(theme.accent,0.22),0) end
+      tmid(p.x+10,iy,24,item, a(theme.text, hot and 1 or 0.8),12) end
+    return
+  end
+  local x,y=p.x,p.y; local w,h=PICKER_W,PICKER_H
+  if ui.m.click and not inside(x,y,w,h) then ui.picker=nil; ui.m.click=false; return end
+  -- floating panel: soft shadow, rounded body, accent hairline and an inner
+  -- echo line for depth.
+  for i=4,1,-1 do draw.RectFilled(x-i*2.5,y-i*1.5,w+i*5,h+i*4,{0,0,0,0.10*theme.opacity},6+i*2) end
+  draw.RectFilled(x,y,w,h, a(theme.panel_hi,0.99),6)
+  draw.Rect(x,y,w,h, a(theme.accent,0.55),6,1)
+  draw.Rect(x+2,y+2,w-4,h-4, a(theme.line,0.16),6,1)
+  local pad=12
+  local svx,svy=x+pad,y+pad; local svw,svh=200,120
+  local huecol=hsv(p.h,1,1)
+  -- saturation/value field. 48 columns of the white->hue ramp with a 24 step
+  -- black shade on top: enough steps that the gradients do not band.
+  grad_h(svx,svy,svw,svh,{1,1,1,1},huecol,48)
+  for i=0,23 do draw.RectFilled(svx,svy+i*(svh/24),svw,svh/24+1,{0,0,0,i/23},0) end
+  draw.Rect(svx,svy,svw,svh,a(theme.line,1),0,1)
+  -- the sv handle needs a dark ring under it, otherwise it disappears on the
+  -- light corner of the field. the drag is applied BEFORE the handle is drawn
+  -- so the handle does not lag a frame behind the cursor.
+  if inside(svx,svy,svw,svh) and ui.m.click then p.drag="sv" end
+  if p.drag=="sv" then p.s=clamp((ui.m.x-svx)/svw,0,1); p.v=clamp(1-(ui.m.y-svy)/svh,0,1) end
+  local hx1,hy1=svx+p.s*svw, svy+(1-p.v)*svh
+  draw.Circle(hx1,hy1,6.5,{0,0,0,0.75},16,2.5)
+  draw.Circle(hx1,hy1,5.5,{1,1,1,1},16,1.5)
+  -- hue rail
+  local hx,hy=svx+svw+8,svy; local hw2,hh=18,svh
+  for i=0,47 do draw.RectFilled(hx,hy+i*(hh/48),hw2,hh/48+1,hsv(i/48,1,1),0) end
+  draw.Rect(hx,hy,hw2,hh,a(theme.line,1),0,1)
+  if inside(hx,hy,hw2,hh) and ui.m.click then p.drag="hue" end
+  if p.drag=="hue" then p.h=clamp((ui.m.y-hy)/hh,0,1) end
+  local hy2=hy+p.h*hh
+  draw.Rect(hx-3,hy2-3,hw2+6,6,{0,0,0,0.6},1,2.5)
+  draw.Rect(hx-3,hy2-3,hw2+6,6,{1,1,1,1},1,1.5)
+  -- alpha ramp over a checkerboard so a fading color stays visible
+  local ax,ay=svx,svy+svh+10; local aw,ah=svw+8+hw2,12
+  swatch_checker(ax,ay,aw,ah,{0.13,0.15,0.20,1},{0.08,0.09,0.13,1},4)
+  grad_h(ax,ay,aw,ah,{huecol[1],huecol[2],huecol[3],0},{huecol[1],huecol[2],huecol[3],1},40)
+  draw.Rect(ax,ay,aw,ah,a(theme.line,1),0,1)
+  if inside(ax,ay,aw,ah) and ui.m.click then p.drag="al" end
+  if p.drag=="al" then p.al=clamp((ui.m.x-ax)/aw,0,1) end
+  local axp=ax+p.al*aw
+  draw.Rect(axp-2,ay-3,4,ah+6,{0,0,0,0.6},1,2.5)
+  draw.Rect(axp-2,ay-3,4,ah+6,{1,1,1,1},1,1.5)
+  local fin=hsv(p.h,p.s,p.v); fin[4]=p.al
+  col[p.color]={fin[1],fin[2],fin[3],fin[4]}; cfg_dirty=true
+  if p.color=="c_accent" then theme.accent={fin[1],fin[2],fin[3],1} end
+  -- live preview chip + hex readout
+  local px,py=svx,ay+ah+10
+  swatch_checker(px,py,44,26,{0.13,0.15,0.20,1},{0.08,0.09,0.13,1},4)
+  draw.RectFilled(px,py,44,26,fin,3)
+  draw.Rect(px,py,44,26,a(theme.line,1),3,1)
+  local r8=math.floor(fin[1]*255); local g8=math.floor(fin[2]*255); local b8=math.floor(fin[3]*255)
+  tmid(px+52,py,13,string.format("#%02X%02X%02X",r8,g8,b8),a(theme.text,1),12)
+  tmid(px+52,py+13,13,string.format("A %d%%   R %d  G %d  B %d",math.floor(p.al*100),r8,g8,b8),a(theme.faint,1),10)
+  -- quick picks
+  local pry=py+34
+  for i,pc in ipairs(PRESETS) do
+    local bx=svx+(i-1)*21
+    draw.RectFilled(bx,pry,18,18,pc,3)
+    draw.Rect(bx,pry,18,18,a(theme.line,1),3,1)
+    if inside(bx,pry,18,18) and ui.m.click then
+      p.h,p.s,p.v=to_hsv(pc); p.al=pc[4] or 1; ui.m.click=false
+    end
+  end
+  if not ui.m.down then p.drag=nil end
+end
+
+local TOPBAR_H=38
+local SIDEBAR_W=132
+local PAD=14
+local GUT=12
+
+-- snowfall for the menu. particles live in one table (the main chunk is close
+-- to Lua's 200-local ceiling, so this is a single local instead of one per
+-- field). flakes are split into depth layers: far ones are small, slow and dim,
+-- near ones are larger, faster, brighter and get a soft glow. most draw as tiny
+-- six-armed crystals with a bright core (the biggest get side branches); the
+-- smallest stay soft dots. each flake drifts down and sideways, sways on a
+-- per-flake sine, twinkles and slowly spins, then wraps back to the top when it
+-- leaves the panel. the field is seeded once and never reseeded on window height
+-- changes: the menu height animates on every tab switch, and reseeding when h
+-- drifted made every flake teleport each frame. wraps use the live height
+-- instead. the bottom of the panel stays clean like the rest of the menu.
+local SNOW={ parts={}, n=0, w=0 }
+function SNOW.seed(n,w,h)
+  SNOW.n=n; SNOW.w=w
+  local p=SNOW.parts
+  for i=1,n do
+    if not p[i] then p[i]={} end
+    local f=p[i]
+    local z=math.random()
+    f.z=z
+    f.x=math.random()*w
+    f.y=math.random()*h
+    f.r=0.55+z*2.4+math.random()*0.5
+    f.vy=9+z*46+math.random()*8
+    f.amp=2+z*11
+    f.ph=math.random()*6.283
+    f.sp=0.45+z*0.9+math.random()*0.35
+    f.al=0.16+z*0.58
+    f.vx=(math.random()-0.5)*(3+z*10)
+    f.tw=math.random()*6.283
+    f.rot=math.random()*6.283
+    f.spin=(math.random()-0.5)*1.1
+  end
+  for i=n+1,#p do p[i]=nil end
+  -- far flakes first so near flakes and their glow sit on top.
+  table.sort(p,function(a,b) return a.z<b.z end)
+end
+function SNOW.update(n,w,h)
+  if n~=SNOW.n then SNOW.seed(n,w,h)
+  elseif w~=SNOW.w then
+    -- width changed (rare): keep every flake but rescale its X so nothing jumps.
+    local s=SNOW.w>0 and (w/SNOW.w) or 1
+    for i=1,SNOW.n do SNOW.parts[i].x=SNOW.parts[i].x*s end
+    SNOW.w=w
+  end
+  local p=SNOW.parts
+  for i=1,SNOW.n do
+    local f=p[i]
+    f.y=f.y+f.vy*_dt
+    f.x=f.x+f.vx*_dt
+    f.rot=f.rot+f.spin*_dt
+    if f.y>h+3 then f.y=-3; f.x=math.random()*w end
+    if f.x<-4 then f.x=f.x+w+8 elseif f.x>w+4 then f.x=f.x-w-8 end
+  end
+end
+function SNOW.draw(x,y,w,h,alpha)
+  local p=SNOW.parts
+  local tm=now()
+  -- snow follows the menu accent instead of a fixed white: the line work leans
+  -- toward the accent, the glow blends accent/accent2, and the cores stay a
+  -- brighter version of the accent so the flakes still pop against the panel.
+  local ac=theme.accent; local ac2=theme.accent2
+  local gc=mix(ac,ac2,0.35)
+  local lc=mix(ac,{1,1,1},0.12)
+  local cc=mix(ac,{1,1,1},0.52)
+  for i=1,SNOW.n do
+    local f=p[i]
+    local fx=x+f.x+math.sin(tm*f.sp+f.ph)*f.amp
+    local fy=y+f.y
+    if fy>=y-3 and fy<=y+h+3 and fx>=x-3 and fx<=x+w+3 then
+      local a=f.al*alpha*(0.82+0.18*math.sin(tm*1.6+f.tw))
+      if f.z>0.55 then
+        draw.CircleFilled(fx,fy,f.r*(2.0+f.z),{gc[1],gc[2],gc[3],a*0.22},8)
+      end
+      if f.z>0.28 then
+        local L=f.r*(2.4+f.z)
+        local col={lc[1],lc[2],lc[3],a*0.92}
+        local c1,s1=math.cos(f.rot),math.sin(f.rot)
+        local c2,s2=math.cos(f.rot+1.0472),math.sin(f.rot+1.0472)
+        local c3,s3=math.cos(f.rot+2.0944),math.sin(f.rot+2.0944)
+        draw.Line(fx-c1*L,fy-s1*L,fx+c1*L,fy+s1*L,col,1)
+        draw.Line(fx-c2*L,fy-s2*L,fx+c2*L,fy+s2*L,col,1)
+        draw.Line(fx-c3*L,fy-s3*L,fx+c3*L,fy+s3*L,col,1)
+        draw.CircleFilled(fx,fy,math.max(0.7,f.r*0.32),{cc[1],cc[2],cc[3],a},6)
+        -- side branches on the biggest crystals, one pair per arm.
+        if f.z>0.84 then
+          local bl=L*0.34
+          for k=0,5 do
+            local ang=f.rot+k*1.0472
+            local bx=fx+math.cos(ang)*L*0.62
+            local by=fy+math.sin(ang)*L*0.62
+            local ca,sa=math.cos(ang+0.9),math.sin(ang+0.9)
+            local cb,sb=math.cos(ang-0.9),math.sin(ang-0.9)
+            draw.Line(bx,by,bx+ca*bl,by+sa*bl,col,1)
+            draw.Line(bx,by,bx+cb*bl,by+sb*bl,col,1)
+          end
+        end
+      else
+        draw.CircleFilled(fx,fy,f.r,{lc[1],lc[2],lc[3],a},6)
+      end
+    end
+  end
+end
+
+local function draw_menu()
+  local e=ease_out(ui.appear); if e<0.01 then return end
+  theme.opacity=(cfg.ui_opacity or 100)/100 * e
+  local x,y,w=ui.x,ui.y,ui.w
+
+  local cx=x+SIDEBAR_W
+  local cw=w-SIDEBAR_W
+  local ctop=y+TOPBAR_H
+  local ncol=2; local colw=(cw-PAD*2-GUT)/ncol; local colx={cx+PAD, cx+PAD+colw+GUT}
+
+  local placed={}; local coly={0,0}
+  for _,g in ipairs(SCHEMA[ui.tab].groups) do
+    local gh=30; for _,it in ipairs(g.items) do gh=gh+row_h(it) end
+    local c=(coly[1]<=coly[2]) and 1 or 2
+    placed[#placed+1]={g=g,c=c,oy=coly[c],h=gh}
+    coly[c]=coly[c]+gh+GUT
+  end
+  local contentH=math.max(coly[1],coly[2]); if contentH>0 then contentH=contentH-GUT end
+  local sideH=6+#SCHEMA*26
+  ui.h=approach("winh", TOPBAR_H+math.max(contentH,sideH)+PAD, 18)
+  local h=ui.h
+  SNOW.update(72,w,h)
+
+  -- soft drop shadow, then framed window
+  for i=4,1,-1 do draw.RectFilled(x-i*2.5, y-i*1.5, w+i*5, h+i*4, {0,0,0,0.09*theme.opacity}, theme.round+i*2) end
+  draw.RectFilled(x,y,w,h, {theme.base[1],theme.base[2],theme.base[3],0.94*theme.opacity}, theme.round)
+  draw.RectFilled(x+theme.round,y,SIDEBAR_W,h-TOPBAR_H, {theme.base2[1],theme.base2[2],theme.base2[3],0.5*theme.opacity}, 0)
+  -- topbar fades downward, lighter at the very top
+  grad_v(x+theme.round,y,w-theme.round*2,TOPBAR_H,
+    {theme.panel_hi[1],theme.panel_hi[2],theme.panel_hi[3],0.34*theme.opacity},
+    {theme.panel[1],theme.panel[2],theme.panel[3],0.12*theme.opacity}, 48)
+  -- crisp single frame, with a faint inner echo line for depth
+  draw.Rect(x,y,w,h, a(theme.line,0.95), theme.round, 1)
+  draw.Rect(x+3,y+3,w-6,h-6, a(theme.line,0.22), theme.round, 1)
+  draw.Line(x+theme.round, y+TOPBAR_H, x+w-theme.round, y+TOPBAR_H, a(theme.line,0.6), 1)
+  draw.Line(x+SIDEBAR_W, y+TOPBAR_H, x+SIDEBAR_W, y+h-theme.round, a(theme.line,0.5), 1)
+  -- solid accent rule pinned to the top edge (no gradient steps = no banding)
+  draw.RectFilled(x+theme.round, y, w-theme.round*2, 2, a(mix(theme.accent,theme.accent2,0.5), 0.92*e), 0)
+  corners(x,y,w,h, 18, a(mix(theme.accent,theme.accent2,0.5), 0.95*e), 2, a(mix(theme.accent,theme.accent2,0.5), 0.5*e))
+
+  local lw=ts("Ego",17)
+  draw.Text(x+PAD,y+11,"Ego", a(theme.text,1),17)
+  local dx,dy=x+PAD+lw+11, y+19
+  if draw.PolyFilled then pcall(draw.PolyFilled, {{dx,dy-4},{dx+4,dy},{dx,dy+4},{dx-4,dy}}, a(theme.accent,1))
+  else draw.RectFilled(dx-3,dy-3,6,6, a(theme.accent,1), 1) end
+  trt(x+w-PAD,y+12,16,"v1.0", a(theme.faint,1),10)
+
+  -- vertical tab rail
+  local sy=ctop+6
+  for i,tab in ipairs(SCHEMA) do
+    local label=string.lower(tab.name); local ty=sy+(i-1)*26
+    local hot=inside(x+8,ty,SIDEBAR_W-16,24) and interactable()
+    if hot and ui.m.click then ui.tab=i; ui.m.click=false end
+    local act=approach("tab"..i,(ui.tab==i) and 1 or 0,18)
+    if act>0.01 then
+      draw.RectFilled(x+8,ty,SIDEBAR_W-16,24, a(theme.accent, 0.12*act), 2)
+      -- slanted wedge instead of a plain bar
+      local wq={{x+8,ty},{x+11,ty},{x+15,ty+24},{x+12,ty+24}}
+      if draw.PolyFilled then pcall(draw.PolyFilled, wq, a(theme.accent,act)) else draw.RectFilled(x+8,ty,3,24, a(theme.accent,act), 0) end
+      local qx, qy = x+SIDEBAR_W-19, ty+12
+      for i=0,2 do
+        draw.RectFilled(qx+i*2, qy-4+i*2, 1.4,1.4, a(theme.accent,act*0.8),0)
+        draw.RectFilled(qx+i*2, qy+4-i*2, 1.4,1.4, a(theme.accent,act*0.8),0)
+      end
+    end
+    tmid(x+18,ty,24,label, a(mix(theme.faint,theme.text,math.max(act, hot and 0.5 or 0)),1),12)
+  end
+  if inside(x,y,w,TOPBAR_H) and ui.m.click and not ui.drag and not ui.picker then ui.drag={k="win",ox=ui.m.x-x,oy=ui.m.y-y}; ui.m.click=false end
+
+  -- flat sections: numbered index + small caps label + hairline rule
+  local secn=0
+  for _,pl in ipairs(placed) do
+    local g=pl.g; local gx=colx[pl.c]; local gy=ctop+pl.oy; local gh=pl.h
+    secn=secn+1
+    local num=string.format("%02d",secn)
+    local nw=ts(num,10)
+    draw.RectFilled(gx,gy, nw+7, 13, a(theme.accent,0.16), 2)
+    draw.Text(gx+4, gy+2, num, a(theme.accent,0.95), 10)
+    local caps=string.upper(g.name); local hw=ts(caps,11)
+    draw.Text(gx+nw+13, gy+1, caps, a(theme.faint,1), 11)
+    draw.Line(gx+nw+hw+21, gy+9, gx+colw, gy+9, a(theme.line,0.5), 1)
+    local iy=gy+18
+    for _,it in ipairs(g.items) do local f=WI[it.t]; if f then f(it,gx,iy,colw) end iy=iy+row_h(it) end
+  end
+  picker_draw()
+  SNOW.draw(x,y,w,h,theme.opacity)
+end
+
+local function update_input()
+  ui.m.x,ui.m.y=mouse_pos()
+  local d=ekey(0x01); ui.m.click=d and not ui.m.was; ui.m.down=d; ui.m.was=d
+  if not d and ui.drag and ui.drag.k~="slider" then ui.drag=nil end
+  if ui.drag and ui.drag.k=="win" then local sw,sh=scr(); ui.x=clamp(ui.m.x-ui.drag.ox,0,sw-ui.w); ui.y=clamp(ui.m.y-ui.drag.oy,0,sh-ui.h) end
+  if ui.drag and ui.drag.k=="hud_keys" then hud_keys_pos.x=ui.m.x-ui.drag.ox; hud_keys_pos.y=ui.m.y-ui.drag.oy end
+  if ui.drag and (ui.drag.k=="hud_mark" or ui.drag.k=="hud_bar") then
+    local sw2,sh2=scr()
+    local k=ui.drag.k=="hud_mark" and "mark" or "bar"
+    hud_pos[k]={x=clamp(ui.m.x-ui.drag.ox,0,sw2-24),y=clamp(ui.m.y-ui.drag.oy,0,sh2-14)}
+  end
+  local mk=bind.menu_key or 0xA1; local held=ekey(mk)
+  if held and not ui.menu_edge then ui.open=not ui.open; ui.picker=nil; ui.capture=nil end
+  ui.menu_edge=held
+  -- aimbot enable toggle. edge triggered, so holding the key flips it once
+  -- instead of every frame. skipped while a bind is being captured: the
+  -- capture loop reads every key on the keyboard and would otherwise bind the
+  -- key AND flip the aimbot in the same frame.
+  local tk=bind.aim_toggle or 0
+  local th=(tk~=0) and ekey(tk) or false
+  if th and not ui.tog_edge and not ui.capture then cfg.aim_on=not cfg.aim_on; cfg_dirty=true end
+  ui.tog_edge=th
+  -- silent aim and esp get the same edge triggered enable key. each toggle
+  -- keeps its own edge flag, otherwise flipping one would leave the others
+  -- latched and the next press would be swallowed.
+  local sk=bind.silent_toggle or 0
+  local sh=(sk~=0) and ekey(sk) or false
+  if sh and not ui.tog_edge_s and not ui.capture then cfg.silent_on=not cfg.silent_on; cfg_dirty=true end
+  ui.tog_edge_s=sh
+  local ek=bind.esp_toggle or 0
+  local eh=(ek~=0) and ekey(ek) or false
+  if eh and not ui.tog_edge_e and not ui.capture then cfg.esp_on=not cfg.esp_on; cfg_dirty=true end
+  ui.tog_edge_e=eh
+  local qk=bind.trig_toggle or 0
+  local qh=(qk~=0) and ekey(qk) or false
+  if qh and not ui.tog_edge_t and not ui.capture then cfg.trig_on=not cfg.trig_on; cfg_dirty=true end
+  ui.tog_edge_t=qh
+  if ui.capture then
+    if not ui.capture_ok then if not ekey(0x01) then ui.capture_ok=true end return end
+    if ekey(0x1B) then bind[ui.capture]=0; cfg_dirty=true; ui.capture=nil; return end
+    for vk=0x01,0xFE do if vk~=0x1B and ekey(vk) then bind[ui.capture]=vk; cfg_dirty=true; ui.capture=nil; return end end
+  end
+end
+
+local BONE_LIST={"head","torso","arm1","arm2","leg1","leg2","shoulder1","shoulder2","hip1","hip2"}
+local SKELETON={{"head","torso"},{"torso","shoulder1"},{"torso","shoulder2"},{"shoulder1","arm1"},{"shoulder2","arm2"},{"torso","hip1"},{"torso","hip2"},{"hip1","leg1"},{"hip2","leg2"}}
+local AIM_BONE={"head","torso","hip1","arm1","leg1","head"}
+local vm_players={}
+local gadget_cache={}
+local vm_seen={}
+local char_models={}
+local char_last=-1
+local MATCH_R2=400
+local MAXD2=250000
+local HIDE2=9
+local GRACE=0.4
+-- a viewmodel record is dropped this long after it was last seen. it has to sit
+-- comfortably beyond GRACE - the window a stale viewmodel keeps being drawn
+-- for - or the pruner would evict a live player before the grace check could
+-- ever fire.
+local VM_STALE=2.0
+
+-- closure-free accessors.
+--
+-- scan_vm runs every frame over every viewmodel, and the obvious
+-- `pcall(function() return vm:FindFirstChild(bn) end)` form allocates a fresh
+-- closure for EVERY bone, EVERY viewmodel, EVERY frame. at 10 bones and a full
+-- lobby that is thousands of short-lived closures per tick - pure GC pressure,
+-- and it scales with player count, which is exactly the shape of a progressive
+-- framerate slide. handing pcall the function and its arguments instead
+-- allocates nothing.
+--
+-- they live in one table rather than as separate locals because the main chunk is
+-- already against Lua's 200-local limit (see the TUNE note).
+local AC={}
+-- bumped once per rendered frame by OnFrame. AC.proj stamps its per-bone memo
+-- with it, so a memo is never reused across frames.
+AC.frame=0
+function AC.child(inst,name) return inst:FindFirstChild(name) end
+function AC.pos(inst) return inst.Position end
+function AC.size(inst) return inst.Size end
+function AC.trans(inst) return inst.Transparency end
+function AC.name(inst) return inst.Name end
+function AC.addr(inst) return inst.Address end
+function AC.campos() return camera.GetPosition() end
+function AC.hp(h) return h.Health end
+function AC.maxhp(h) return h.MaxHealth end
+function AC.tool(m) return m:FindFirstChildOfClass("Tool") end
+-- write a bone position into a reusable slot. nil means the bone is genuinely
+-- absent, and the slot is cleared so aim_src can still tell "no real bone
+-- here" from "not filled in yet".
+function AC.bone(slot,inst)
+  if not inst then return nil end
+  local p=call(AC.pos,inst)
+  if not p then return nil end
+  if not slot then slot={} end
+  slot.x=p.X; slot.y=p.Y; slot.z=p.Z
+  return slot
+end
+-- project a bone ONCE per frame and remember the result on the bone itself.
+-- the bone tables are reused frame to frame, so the memo can never be stale -
+-- which is what lets run_esp drop its per-player sx_cache table.
+--
+-- the memo is stamped with the frame id rather than reset by scan_vm. scan_vm is
+-- pcall'd, so it can be skipped entirely if an engine read throws; with a reset
+-- driven from scan_vm the stale projection would then survive into the next
+-- frame and the ESP would draw from last frame's coordinates.
+function AC.proj(b)
+  if b.fid~=AC.frame then
+    local x,y,v=W2S(b.x,b.y,b.z)
+    b.sx=x; b.sy=y; b.sv=v; b.fid=AC.frame
+  end
+  return b.sx,b.sy,b.sv
+end
+
+local function refresh_char_models()
+  char_models={}
+  local ws=game.Workspace; if not ws then return end
+  for _,c in ipairs(call(function() return ws:GetChildren() end) or {}) do
+    if c.ClassName=="Model" then
+      local hrp=call(AC.child,c,"HumanoidRootPart")
+      local hum=call(AC.child,c,"Humanoid")
+      if not hum then hum=call(function() return c:FindFirstChildOfClass("Humanoid") end) end
+      if hrp and hum then
+        local cb={}
+        for _,bn in ipairs({"head","torso","hip1","LowerTorso","UpperTorso"}) do
+          local bp=call(AC.child,c,bn)
+          if bp then cb[bn]=bp end
+        end
+        -- the address is cached here so the viewmodel -> character match can
+        -- be held stable across refreshes. GetChildren hands back a fresh
+        -- userdata wrapper for the same instance on every call, so the model
+        -- itself is not a usable key - the address is.
+        char_models[c]={hrp=hrp,hum=hum,bones=cb,addr=call(AC.addr,c)}
+      end
+    end
+  end
+end
+-- refresh the cached world position of every character model.
+--
+-- this used to be read inside match_char, i.e. once per VIEWMODEL per model per
+-- frame - V*C engine property reads per tick, where V is the viewmodel count
+-- and C the character count. every viewmodel is matched against the SAME set
+-- of character positions, so they are read once per tick here and the match
+-- itself becomes pure arithmetic.
+local function refresh_char_pos()
+  for model,data in pairs(char_models) do
+    local pos=call(AC.pos,data.hrp)
+    if pos then data.px=pos.X; data.py=pos.Y; data.pz=pos.Z else data.px=nil end
+  end
+end
+-- match a viewmodel to the character model it mirrors.
+--
+-- prev_addr is the address of the match used on the previous frame. the
+-- nearest-model search flips between two players standing next to each other,
+-- and every flip swaps their names, health and weapons - the classic ESP
+-- flicker. the previous match is therefore kept as long as it is still
+-- reasonably close, so the assignment only changes when it really has to.
+local function match_char(hx,hy,hz,prev_addr)
+  local best,bd=nil,MATCH_R2
+  local pmodel,pdata=nil,nil
+  for model,data in pairs(char_models) do
+    local px=data.px
+    if px then
+      local dx,dy,dz=hx-px,hy-data.py,hz-data.pz; local d=dx*dx+dy*dy+dz*dz
+      if d<bd then bd=d; best=model end
+      if prev_addr and not pdata and d<MATCH_R2*2.25 and data.addr==prev_addr then pmodel=model; pdata=data end
+    end
+  end
+  if pmodel then return pmodel end
+  return best
+end
+
+local function scan_vm()
+  -- the list is built into a local and swapped in at the very end. a read
+  -- that throws half way through the sweep therefore leaves the PREVIOUS
+  -- frame in place instead of blanking the whole ESP for one frame - the
+  -- difference between a single dropped frame and the overlay strobing.
+  local out={}
+  local tnow=now()
+  -- drop records whose viewmodel is long gone. without a prune the table only
+  -- ever grows, and a table that never shrinks is what turns a 1000fps machine
+  -- into a 300fps one a couple of minutes into a match.
+  for k,r in pairs(vm_seen) do
+    if not r.seen or (tnow-r.seen)>VM_STALE then vm_seen[k]=nil end
+  end
+  local ws=game.Workspace; local vf=ws and call(AC.child,ws,"Viewmodels")
+  if not vf then vm_players={}; return end
+  if tnow-char_last>0.3 then char_last=tnow; pcall(refresh_char_models) end
+  refresh_char_pos()
+  local cam=call(AC.campos)
+  for _,vm in ipairs(call(function() return vf:GetChildren() end) or {}) do
+    if vm.Name=="Viewmodel" then
+      -- the record is keyed by the viewmodel's ADDRESS, never by the instance.
+      --
+      -- GetChildren hands back a fresh userdata wrapper for the same underlying
+      -- instance on every call, so an instance-keyed table collects a NEW key
+      -- every single frame for the same viewmodel and grows without bound. that
+      -- is the same defect nade_parents had, and the same symptom: a steady
+      -- slide from 1000fps to 300fps over the course of a match, with the ESP
+      -- starting to twitch once the table got big enough to hurt.
+      --
+      -- Address is a stable integer for the lifetime of the instance, so every
+      -- frame collapses onto the SAME record and the table stays proportional to
+      -- the number of viewmodels that actually exist.
+      local vkey=call(AC.addr,vm); if vkey==0 then vkey=nil end
+      local rec
+      if vkey then
+        rec=vm_seen[vkey]
+        if not rec then rec={}; vm_seen[vkey]=rec end
+      else
+        rec={}   -- no stable identity: this frame's record only, never cached
+      end
+      rec.seen=tnow
+      local torso=call(AC.child,vm,"torso")
+      local head=call(AC.child,vm,"head")
+      if torso and head then
+        local tp=call(AC.pos,torso); local tsz=call(AC.size,torso); local ttr=call(AC.trans,torso) or 0
+        if tp and tsz and tsz.X>0.1 and tsz.Y>0.1 and ttr<1 then
+          local hpos=call(AC.pos,head)
+          local dcam=(cam and hpos) and ((cam.X-hpos.X)^2+(cam.Y-hpos.Y)^2+(cam.Z-hpos.Z)^2) or 0
+          if (not cam) or (dcam<=MAXD2 and dcam>HIDE2) then
+            -- the bone tables live on the record and are reused frame to frame.
+            -- rebuilding them per viewmodel per frame was ~11 short-lived tables
+            -- per player per frame, and that GC pressure scales with the size of
+            -- the lobby.
+            local bones=rec.bones
+            if not bones then bones={}; rec.bones=bones end
+            local bvs=rec.bv
+            if not bvs then bvs={}; rec.bv=bvs end
+            local mnx,mny,mnz,mxx,mxy,mxz=1e9,1e9,1e9,-1e9,-1e9,-1e9; local bc=0
+            for i=1,#BONE_LIST do
+              local bn=BONE_LIST[i]
+              local b=call(AC.child,vm,bn)
+              local p,sz
+              if b then p=call(AC.pos,b); sz=call(AC.size,b) end
+              if p and sz and sz.X>0 then
+                local v=bvs[i]
+                if not v then v={}; bvs[i]=v end
+                v.x=p.X; v.y=p.Y; v.z=p.Z
+                bones[bn]=v; bc=bc+1
+                local hx,hy,hz=sz.X*0.5,sz.Y*0.5,sz.Z*0.5
+                if p.X-hx<mnx then mnx=p.X-hx end; if p.Y-hy<mny then mny=p.Y-hy end; if p.Z-hz<mnz then mnz=p.Z-hz end
+                if p.X+hx>mxx then mxx=p.X+hx end; if p.Y+hy>mxy then mxy=p.Y+hy end; if p.Z+hz>mxz then mxz=p.Z+hz end
+              else
+                bones[bn]=nil
+              end
+            end
+            if bc>=5 then
+              local hx,hy,hz
+              if bones.head then hx,hy,hz=bones.head.x,bones.head.y,bones.head.z else hx,hy,hz=tp.X,tp.Y,tp.Z end
+              local model=match_char(hx,hy,hz,rec.addr)
+              if model then
+                local data=char_models[model]
+                rec.addr=data.addr
+                local hp,mhp=100,100
+                local ok1,v1=pcall(AC.hp,data.hum)
+                if ok1 then hp=tonumber(v1) or 0 end
+                local ok2,v2=pcall(AC.maxhp,data.hum)
+                if ok2 then mhp=tonumber(v2) or 100 end
+                if mhp<1 then mhp=100 end
+                if hp>0 then
+                  rec.alive=true; rec.dc=0
+                  rec.t=tnow; rec.hp=hp; rec.mhp=mhp; rec.ent=data.hrp
+                  -- lock the label to the player it was first matched with. the
+                  -- nearest-model search can flip between two nearby characters
+                  -- for a frame, and blindly copying the new name every frame
+                  -- made the ESP labels swap from player to player. a different
+                  -- name on a different match address must stay put for a full
+                  -- second before it is accepted, so momentary flips are ignored
+                  -- while a real respawn/reassignment still updates.
+                  local nm=call(AC.name,model)
+                  if nm then
+                    if not rec.name then
+                      rec.name=nm; rec.nameaddr=rec.addr
+                    elseif nm~=rec.name then
+                      if rec.nameaddr==rec.addr then
+                        rec.name=nm; rec.nameaddr=rec.addr; rec.caddr=nil; rec.cname=nil
+                      elseif rec.caddr~=rec.addr or rec.cname~=nm then
+                        rec.caddr=rec.addr; rec.cname=nm; rec.ct=tnow
+                      elseif tnow-(rec.ct or 0)>=1.0 then
+                        rec.name=nm; rec.nameaddr=rec.addr; rec.caddr=nil; rec.cname=nil
+                      end
+                    else
+                      rec.caddr=nil; rec.cname=nil
+                    end
+                  end
+                  -- aim bones, taken from the REAL character model rather than the viewmodel.
+                  -- aim_src() falls back to p.bones (the viewmodel) when a name is
+                  -- absent here, and the viewmodel is parked next to the camera -
+                  -- so a fallback bone projects nearest the crosshair every time
+                  -- and "Closest" would always pick it. that is exactly the bug
+                  -- where Closest aimed at the closest-by-distance part instead of
+                  -- the closest-to-crosshair part.
+                  --
+                  -- R6 has torso/hip1; R15 has UpperTorso/LowerTorso and no torso
+                  -- or hip1 at all, so the aliases below are what keep R15 players
+                  -- from silently dropping to viewmodel bones. all three keys are
+                  -- always written, even when the fallback is nil, so aim_src can
+                  -- detect "no real bone" instead of quietly using the viewmodel.
+                  local bd=data.bones
+                  local ab=rec.ab
+                  if not ab then ab={}; rec.ab=ab end
+                  ab.head=AC.bone(ab.head,bd and bd.head)
+                  ab.torso=AC.bone(ab.torso,(bd and bd.torso) or (bd and bd.UpperTorso) or (bd and bd.LowerTorso))
+                  ab.hip1=AC.bone(ab.hip1,(bd and bd.hip1) or (bd and bd.LowerTorso) or (bd and bd.UpperTorso))
+                  local tool=call(AC.tool,model)
+                  rec.tool=tool and call(AC.name,tool) or nil
+                else
+                  -- confirmed dead. the record stays (so the scratch tables are
+                  -- still reused) but the player leaves the ESP immediately,
+                  -- exactly as it did when the grace check was a no-op.
+                  --
+                  -- one dead frame is not enough to drop them though: the
+                  -- humanoid is swapped out for a frame during a death or a
+                  -- respawn, and taking the player off the ESP for that single
+                  -- frame is a visible blink. two dead reads in a row are
+                  -- required instead.
+                  rec.dc=(rec.dc or 0)+1
+                  if rec.dc>=2 then rec.alive=false end
+                end
+              end
+              if rec.alive and rec.t and (tnow-rec.t)<=GRACE then
+                local friend=false
+                if call(AC.child,head,"Username") or call(AC.child,vm,"TeammateHighlight") or call(AC.child,head,"TeammateHighlight") then friend=true end
+                local e=rec.e
+                if not e then e={}; rec.e=e end
+                local aabb=e.aabb
+                if not aabb then aabb={}; e.aabb=aabb end
+                aabb[1]=mnx; aabb[2]=mny; aabb[3]=mnz; aabb[4]=mxx; aabb[5]=mxy; aabb[6]=mxz
+                e.bones=bones; e.ab=rec.ab
+                e.hp=rec.hp or 100; e.mhp=rec.mhp or 100; e.name=rec.name; e.ent=rec.ent; e.tool=rec.tool; e.friend=friend
+                out[#out+1]=e
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  -- swap the finished list in. anything that threw above left the old list
+  -- untouched, so one bad read cannot clear the overlay.
+  vm_players=out
+end
+-- screen bounds of the world-space AABB. the corner list used to be rebuilt as
+-- a table of nine tables on every call, i.e. once per player per frame; the
+-- eight corners are unrolled instead so a player costs nothing but the eight
+-- projections themselves.
+local function box2d(bb)
+  local x0,y0,z0=bb[1],bb[2],bb[3]
+  local x1,y1,z1=bb[4],bb[5],bb[6]
+  local mnx,mny,mxx,mxy,vis=1e9,1e9,-1e9,-1e9,false
+  local sx,sy,v
+  sx,sy,v=W2S(x0,y0,z0); if v then vis=true; mnx=sx; mny=sy; mxx=sx; mxy=sy end
+  sx,sy,v=W2S(x1,y0,z0); if v then vis=true; if sx<mnx then mnx=sx end; if sy<mny then mny=sy end; if sx>mxx then mxx=sx end; if sy>mxy then mxy=sy end end
+  sx,sy,v=W2S(x0,y1,z0); if v then vis=true; if sx<mnx then mnx=sx end; if sy<mny then mny=sy end; if sx>mxx then mxx=sx end; if sy>mxy then mxy=sy end end
+  sx,sy,v=W2S(x1,y1,z0); if v then vis=true; if sx<mnx then mnx=sx end; if sy<mny then mny=sy end; if sx>mxx then mxx=sx end; if sy>mxy then mxy=sy end end
+  sx,sy,v=W2S(x0,y0,z1); if v then vis=true; if sx<mnx then mnx=sx end; if sy<mny then mny=sy end; if sx>mxx then mxx=sx end; if sy>mxy then mxy=sy end end
+  sx,sy,v=W2S(x1,y0,z1); if v then vis=true; if sx<mnx then mnx=sx end; if sy<mny then mny=sy end; if sx>mxx then mxx=sx end; if sy>mxy then mxy=sy end end
+  sx,sy,v=W2S(x0,y1,z1); if v then vis=true; if sx<mnx then mnx=sx end; if sy<mny then mny=sy end; if sx>mxx then mxx=sx end; if sy>mxy then mxy=sy end end
+  sx,sy,v=W2S(x1,y1,z1); if v then vis=true; if sx<mnx then mnx=sx end; if sy<mny then mny=sy end; if sx>mxx then mxx=sx end; if sy>mxy then mxy=sy end end
+  if not vis then return nil end
+  return mnx,mny,mxx,mxy
+end
+-- camera position, cached per frame. camera.GetPosition() is an engine call and
+-- cam_dist is hit once per player, once per objective and once per grenade every
+-- frame, so the uncached version made a few hundred redundant engine round-trips
+-- per tick. OnFrame clears this once, so the value is always at most one frame old
+-- - the same staleness the previous code had by accident anyway, since every
+-- caller resolved it mid-frame.
+-- tunables + per-frame camera cache.
+--
+-- these live in a table rather than as separate `local`s because the main chunk is
+-- against Lua's hard 200-local limit ("main function has more than 200 local
+-- variables" at load). every top-level local costs a slot whether or not it is
+-- used, so these are grouped: 1 local here instead of 6.
+local TUNE={ bone_switch=14, esp_alpha_floor=0.25, obj_alpha_floor=0.25 }
+local function frame_cam()
+  if TUNE.cam then return TUNE.cam end
+  local c=call(function() return camera.GetPosition() end)
+  TUNE.cam=c
+  if not c then TUNE.cam2=0 else local x,y,z=c.X,c.Y,c.Z; TUNE.cam2=x*x+y*y+z*z end
+  return TUNE.cam
+end
+local function cam_dist(x,y,z) local cam=frame_cam(); if not cam then return 0 end return math.sqrt(TUNE.cam2-2*(cam.X*x+cam.Y*y+cam.Z*z)+(x*x+y*y+z*z)) end
+local function offscreen_dir(wx,wy,wz)
+  local cam=camera.GetPosition(); local look=camera.GetLookVector(); if not cam or not look then return nil end
+  local dx,dy,dz=wx-cam.X,wy-cam.Y,wz-cam.Z
+  local rx,ry,rz=-look.Z,0,look.X; local rl=math.sqrt(rx*rx+rz*rz); if rl<1e-6 then rl=1e-6 end rx,rz=rx/rl,rz/rl
+  local ux=ry*look.Z-rz*look.Y; local uy=rz*look.X-rx*look.Z; local uz=rx*look.Y-ry*look.X
+  local sxp=dx*rx+dy*ry+dz*rz; local syp=dx*ux+dy*uy+dz*uz
+  return ATAN2(-syp,sxp)
+end
+
+-- aim_target is NOT a sticky lock: it only records who we are currently on so a
+-- swap can be detected, which re-arms the deadzone. acquisition itself is a
+-- fresh score comparison every frame.
+local aim_target=nil
+local aim_bone_lock=nil
+local aim_dz_state=0
+local aim_rx=0
+local aim_ry=0
+
+-- Smoothing is a straight divisor on the screen-space error, the same shape
+-- Project Vector uses: move a 1/sm fraction of what is left, every frame.
+-- sm=1 is a hard snap. no state, no velocity, no spring - the response is
+-- purely a function of the current error, so it cannot overshoot and cannot
+-- carry a flick across a target swap.
+local function aim_step(ex,ey,sm)
+  if sm<=1 then return ex,ey end
+  return ex/sm, ey/sm
+end
+
+-- MoveMouse truncates sub-pixel deltas, so carry the remainder. without this
+-- the last pixel or two of convergence is silently dropped every frame and
+-- the aim parks a pixel or two off forever.
+local function aim_emit(fx,fy)
+  aim_rx=aim_rx+fx
+  aim_ry=aim_ry+fy
+  local ix=(aim_rx>=0) and math.floor(aim_rx+0.5) or -math.floor(0.5-aim_rx)
+  local iy=(aim_ry>=0) and math.floor(aim_ry+0.5) or -math.floor(0.5-aim_ry)
+  if ix==0 and iy==0 then return end
+  aim_rx=aim_rx-ix
+  aim_ry=aim_ry-iy
+  pcall(input.MoveMouse,ix,iy)
+end
+
+local function aim_reset()
+  aim_target=nil
+  aim_bone_lock=nil
+  aim_dz_state=0
+  aim_rx=0
+  aim_ry=0
+end
+
+-- prefer the real character bone over the viewmodel bone. viewmodels render
+-- under a different view matrix in most shooters, so projecting their parts
+-- through the camera matrix lands off-target.
+-- aim bone source. p.ab is the real character rig (with R15 aliases already
+-- resolved in scan_vm); p.bones is the viewmodel.
+--
+-- the fallback to p.bones is NOT safe for aiming. the viewmodel sits next to the
+-- camera, so its bones project closest to the crosshair of anything on screen,
+-- and "Closest" would beat a real head every single time. it is kept only as a
+-- last resort for when ab is entirely absent (no matched character model at all),
+-- which is better than having no candidate. a real bone, when present, always wins.
+-- how many pixels closer another bone must be before Closest switches to it.
+-- this is jitter insurance, not a lock: the incumbent bone keeps a 14px handicap,
+-- so bones that are effectively tied on screen will not flip frame to frame, but a
+-- bone the crosshair is genuinely resting on still wins immediately.
+local function aim_src(p,bn)
+  local ab=p.ab
+  if ab then
+    local v=ab[bn]
+    if v then return v end
+    -- ab is populated but this bone is genuinely absent (R15 with no matching
+    -- UpperTorso/LowerTorso). do NOT fall back to the viewmodel - return nil so
+    -- the bone is skipped and Closest picks from the real bones that do exist.
+    if next(ab)~=nil then return nil end
+  end
+  return p.bones and p.bones[bn]
+end
+
+-- FOV style. the SHAPE decides both the hit region and the drawn indicator, so
+-- the circle/box you see is exactly the region that gets tested - there is no
+-- cosmetic-only mismatch where the visible shape lies about the real bounds.
+--   1 Circle     radial, d <= fov. this is the original behaviour and stays the
+--                default so existing configs do not change hands.
+--   2 Box        half-extent fov on both axes.
+--   3 Diamond    rotated square, |dx|+|dy| <= fov. the corners reach further out
+--                than the box at the same fov while the edges sit closer in.
+--   4 Corner Box same region as Box, drawn as corner brackets. visual only -
+--                identical acquisition to style 2, pick it for the look.
+-- the slider is the style's own single scale parameter: radius for circle, half
+-- width/height for box and diamond.
+local function fov_inside(style,f,sx,sy,cx,cy)
+  if not sx or not sy then return false end
+  local dx=sx-cx; local dy=sy-cy
+  local ax=dx<0 and -dx or dx; local ay=dy<0 and -dy or dy
+  if style==2 or style==4 then return ax<=f and ay<=f end
+  if style==3 then return ax+ay<=f end
+  return dx*dx+dy*dy<=f*f
+end
+-- both box styles share one centred region: half-extent fov on each axis.
+local function fov_box(f,cx,cy) return cx-f,cy-f,f*2,f*2 end
+-- point list for the fov ring, cached per radius.
+--
+-- the api's outlined circle (draw.Circle) draws shadow rings on BOTH sides of
+-- the line - that is what made the old fov read as a fuzzy triple ring instead
+-- of a clean outline. the circle is a closed polyline now: one 1px stroke, no
+-- side rings, no glow. the point count scales with the radius so the outline
+-- follows the true circle instead of a visible polygon.
+--
+-- the list is rebuilt only when the radius actually changes (the slider), not
+-- every frame, so the ring costs one native call per frame.
+local fov_cache={}
+local function fov_circle_pts(cx,cy,f)
+  local k=math.floor(f*2+0.5)
+  local e=fov_cache[k]
+  if e and e.cx==cx and e.cy==cy then return e.pts end
+  local n=math.floor(math.pi*f)
+  if n<96 then n=96 elseif n>360 then n=360 end
+  local pts={}
+  for i=0,n-1 do local t=i/n*math.pi*2; pts[i+1]={cx+math.cos(t)*f,cy+math.sin(t)*f} end
+  local cnt=0; for _ in pairs(fov_cache) do cnt=cnt+1 end
+  if cnt>16 then fov_cache={} end
+  fov_cache[k]={cx=cx,cy=cy,pts=pts}
+  return pts
+end
+-- the fov indicator is the fov and nothing else: one clean shape, no glow,
+-- no second outline, no shadow rings.
+local function fov_draw(style,f,cx,cy,c,al)
+  local q={c[1],c[2],c[3],al}
+  if style==2 then
+    local x,y,w,h=fov_box(f,cx,cy)
+    pcall(draw.Rect,x,y,w,h,q,0,1)
+  elseif style==4 then
+    local x,y,w,h=fov_box(f,cx,cy)
+    pcall(draw.CornerBox,x,y,w,h,q)
+  elseif style==3 then
+    pcall(draw.PolyClosed,{{cx,cy-f},{cx+f,cy},{cx,cy+f},{cx-f,cy}},q,1)
+  else
+    local pts=fov_circle_pts(cx,cy,f)
+    if draw.PolyClosed then pcall(draw.PolyClosed,pts,q,1)
+    else pcall(draw.Circle,cx,cy,f,q,360,1) end
+  end
+end
+
+local function run_aimbot()
+  if not cfg.aim_on then aim_reset(); return end
+  local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5
+  if cfg.aim_fovcircle then fov_draw(cfg.aim_fovstyle,cfg.aim_fov,cx,cy,cfg.aim_fovchroma and chroma() or col.c_fov,0.8) end
+  -- the target line is a live readout, so target selection runs whether or not
+  -- the key is down. only the mouse move is gated on the key.
+  local firing=ekey(bind.aim_key or 0x02)
+  local function cand_for(p)
+    if cfg.aim_team and p.friend then return nil end
+    if cfg.aim_bone==6 then
+      -- Closest genuinely re-scores every bone every frame - that is the whole
+      -- point of the option. an earlier version hard-locked the first bone picked
+      -- at acquisition (order={lock}) to stop the aim point flickering, which meant
+      -- Closest stopped being a comparison at all and just aimed wherever the
+      -- crosshair happened to be when the target engaged. if the crosshair later
+      -- settled on the head, it kept aiming at the torso.
+      --
+      -- jitter is handled with hysteresis instead of a lock: a new bone has to beat
+      -- the incumbent by TUNE.bone_switch px before it takes over. 14px is roughly
+      -- one text line, so a bone that is merely a hair closer will not steal the
+      -- lock, but a clearly closer one will. result is still "closest to
+      -- crosshair", just not twitching between two bones a pixel apart.
+      local order={"head","torso","hip1","arm1","arm2","leg1","leg2"}
+      local c,md=nil,1e9
+      local locked=aim_bone_lock
+      if locked and (p.name or p.key)~=aim_target then locked=nil end
+      for _,bn in ipairs(order) do
+        local b=aim_src(p,bn)
+        if b then
+          local sx,sy,v=W2S(b.x,b.y,b.z)
+          if v then
+            local d2=(sx-cx)*(sx-cx)+(sy-cy)*(sy-cy)
+            -- incumbent gets a handicap so it only loses to a clearly better bone
+            local eff=(bn==locked) and math.sqrt(d2)-TUNE.bone_switch or math.sqrt(d2)
+            if eff<md then md=eff; c={sx=sx,sy=sy,b=b,p=p,bn=bn,d=math.sqrt(d2)} end
+          end
+        end
+      end
+      return c
+    end
+    -- "Arms"/"Legs" aim at whichever limb on that pair is nearer the crosshair and
+    -- re-pick every frame, so aiming at one and drifting onto the other follows.
+    -- both limbs are scored; same bone_switch hysteresis as Closest keeps the pick
+    -- from flicking between two limbs that are a pixel apart.
+    if cfg.aim_bone==4 or cfg.aim_bone==5 then
+      local order=(cfg.aim_bone==4) and {"arm1","arm2"} or {"leg1","leg2"}
+      local c,md=nil,1e9
+      local locked=aim_bone_lock
+      if locked and (p.name or p.key)~=aim_target then locked=nil end
+      for _,bn in ipairs(order) do
+        local b=aim_src(p,bn)
+        if b then
+          local sx,sy,v=W2S(b.x,b.y,b.z)
+          if v then
+            local d2=(sx-cx)*(sx-cx)+(sy-cy)*(sy-cy)
+            local eff=(bn==locked) and math.sqrt(d2)-TUNE.bone_switch or math.sqrt(d2)
+            if eff<md then md=eff; c={sx=sx,sy=sy,b=b,p=p,bn=bn,d=math.sqrt(d2)} end
+          end
+        end
+      end
+      return c
+    end
+    local bn=AIM_BONE[cfg.aim_bone] or "head"
+    local b=aim_src(p,bn)
+    if b then local sx,sy,v=W2S(b.x,b.y,b.z)
+      if v then return {sx=sx,sy=sy,b=b,p=p,bn=bn,d=math.sqrt((sx-cx)*(sx-cx)+(sy-cy)*(sy-cy))} end
+    end
+    return nil
+  end
+  local function score(c)
+    local m=cfg.aim_priority or 1
+    if m==2 then return cam_dist(c.b.x,c.b.y,c.b.z)
+    elseif m==3 then return (c.p.hp or 100)*1e4 + c.d
+    else return c.d end
+  end
+  -- wall check. the visibility cache is only meaningful once it reports ready;
+  -- while it is still warming up the test is skipped rather than guessed, so
+  -- enabling the option cannot blank the aimbot for the first second of a round.
+  -- the ray is cast from the camera to the exact bone that would be aimed at, so
+  -- a head peeking over cover is visible while a torso behind it is not.
+  local wall_ready=false
+  if cfg.aim_wall then
+    if raycast and raycast.IsReady then pcall(function() wall_ready=raycast.IsReady() end) end
+  end
+  local function seen(c)
+    if not cfg.aim_wall or not wall_ready then return true end
+    local cam=frame_cam()
+    if not cam then return true end
+    local ok,vis=pcall(raycast.IsVisible,cam.X,cam.Y,cam.Z,c.b.x,c.b.y,c.b.z)
+    return not (ok and vis==false)
+  end
+  -- strict FOV re-test for the override, deliberately stricter than the pool gate.
+  --
+  -- fov_inside tests a SQUARE of half-extent f for Box/Corner Box, so a point in
+  -- the corner is up to f*1.41 from centre - visually outside the circle the
+  -- player believes they have, yet inside the tested region. a gadget never hit
+  -- this because it is only ever taken when nothing better exists, whereas
+  -- playerover actively promotes a marginal player over a solidly-in-FOV gadget.
+  -- so the override requires the player's HEAD - not just the chosen bone - to
+  -- sit inside the same region the target line is drawn against. head rather than
+  -- the bone, because the bone can be a hip that swings far outside while the
+  -- player still reads as on-screen.
+  local function fov_head_ok(p,style,f,cx2,cy2)
+    local hb=p.bones.head or p.bones.torso
+    if not hb then return false end
+    local sx,sy,v=W2S(hb.x,hb.y,hb.z)
+    if not v then return false end
+    return fov_inside(style,f,sx,sy,cx2,cy2)
+  end
+
+  local best,bs=nil,1e18
+  for _,p in ipairs(vm_players) do
+    local c=cand_for(p)
+    if c and fov_inside(cfg.aim_fovstyle,cfg.aim_fov,c.sx,c.sy,cx,cy) then local s=score(c); if s<bs and seen(c) then bs=s; best=c end end
+  end
+  if cfg.aim_drone then
+    local gb,gs=nil,1e18
+    for _,d in ipairs(gadget_cache) do
+      local sx,sy,v=W2S(d.x,d.y,d.z)
+      if v then local dd=math.sqrt((sx-cx)*(sx-cx)+(sy-cy)*(sy-cy))
+        if fov_inside(cfg.aim_fovstyle,cfg.aim_fov,sx,sy,cx,cy) then local c={sx=sx,sy=sy,b=d,p={name=d.lb,key=d.lb,hp=100},bn="gadget",d=dd}; local s=score(c); if s<gs and seen(c) then gs=s; gb=c end end
+      end
+    end
+    -- a gadget is only taken when there is no player to take, or when the
+    -- override is off. with the override on, the player also has to pass the
+    -- stricter head-inside-FOV test - otherwise playerover could promote a
+    -- player who is only marginally inside the (square, for box styles) FOV
+    -- region over a gadget sitting dead centre.
+    if gb then
+      local use=not best
+      if not use and cfg.aim_playerover then use=not fov_head_ok(best.p,cfg.aim_fovstyle,cfg.aim_fov,cx,cy) end
+      if use then best=gb end
+    end
+  end
+  if not best then
+    aim_reset()
+    return
+  end
+  local prev_target=aim_target
+  aim_target=best.p.name or best.p.key
+  -- priority can still hand us a different player when someone crosses the
+  -- crosshair; a swap re-arms the deadzone so the new target is not already
+  -- considered arrived-at, and drops the Closest-bone lock so the new player
+  -- gets its own bone picked.
+  if prev_target~=aim_target then aim_dz_state=0; aim_bone_lock=nil end
+  if (cfg.aim_bone==6 or cfg.aim_bone==4 or cfg.aim_bone==5) and best.bn~="gadget" then aim_bone_lock=best.bn end
+  -- target line. visible whenever a target is acquired, key held or not - the
+  -- toggle is a pure visibility control, it is not tied to firing. plain line
+  -- from the crosshair to the target, no endpoint marker, own color.
+  if cfg.aim_tline then
+    draw.Line(cx,cy,best.sx,best.sy, a(col.c_tline,1), 1)
+  end
+  if not firing then
+    -- keep the lock and the line up, but re-arm so the next flick converges
+    -- from scratch.
+    aim_dz_state=0
+    return
+  end
+  local sm=math.max(1,math.floor(cfg.aim_smooth or 1))
+  local aimx,aimy=best.sx,best.sy
+  local dx,dy=aimx-cx,aimy-cy
+  local dist=math.sqrt(dx*dx+dy*dy)
+  -- stop inside the deadzone, re-arm only once well clear of it. never scale
+  -- the step by dz/dist - that makes the aim crawl at the edge, never settle.
+  local zs=cfg.aim_dz or 0
+  local zstart=zs*2.2
+  if aim_dz_state==1 then
+    if dist>zstart then aim_dz_state=0 end
+  else
+    if dist<=zs then
+      -- latched. no velocity to kill any more, just stop feeding it.
+      aim_dz_state=1
+    end
+  end
+  if aim_dz_state==0 then
+    local sx,sy=aim_step(dx,dy,sm)
+    if sx~=0 or sy~=0 then aim_emit(sx,sy) end
+  end
+end
+
+local function shoot_origin()
+  local o; local lp=entity.GetLocalPlayer()
+  if lp then pcall(function() o=lp.HeadPosition end) end
+  if not o then pcall(function() o=camera.GetPosition() end) end
+  return o
+end
+
+-- lowest slider value that still reads as "faded" rather than "black". at or
+-- below this the ESP is skipped entirely (see run_esp). 0.25 keeps the colored
+-- fill strong enough to out-weigh the unavoidable black shadow pass.
+local function run_esp()
+  if not cfg.esp_on then return end
+  local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5; local tsz=cfg.esp_textsize
+  -- player ESP opacity, 0..1, applied as a multiplier on every alpha in this
+  -- function rather than folded into the color helper. a() already multiplies
+  -- by theme.opacity, so the slider composes with that instead of replacing it.
+  --
+  -- the floor is NOT arbitrary. every draw primitive in this API auto-includes a
+  -- shadow pass ("All primitives automatically include a shadow pass", and
+  -- draw.Text adds a 4-direction *black* outline) whose alpha the color table
+  -- does not control. fading the fill alone therefore leaves a full-strength
+  -- black ghost behind it - low values render as black text, not absent text.
+  -- the slider therefore starts AT the floor rather than going below it, so there
+  -- is no dead band to fall into. the guard is strict `<` for the same reason:
+  -- with min=25, `<=` would hide the ESP at exactly its lowest setting.
+  local op=clamp((cfg.esp_alpha or 100)/100,0,1)
+  if op<TUNE.esp_alpha_floor then return end
+  for _,p in ipairs(vm_players) do
+    local head=p.bones.head
+    local dist=head and cam_dist(head.x,head.y,head.z) or 0
+    if (cfg.esp_maxdist>=3000 or dist<=cfg.esp_maxdist) and (cfg.esp_team or not p.friend) then
+      local base=col.c_enemy
+      if cfg.esp_chroma then base=chroma() end
+      -- china hat apex in screen space. the name has to clear it, otherwise the
+      -- text sits right on the apex and hides the hat, so the apex is
+      -- projected once here and reused by the hat drawing further down.
+      local hat_s=1; local hat_x,hat_y,hat_v=0,0,false
+      if cfg.esp_hat and head then
+        hat_s=(cfg.esp_hat_size or 100)/100
+        local hx,hy,hv=W2S(head.x,head.y+1.16*hat_s,head.z)
+        hat_x,hat_y,hat_v=hx,hy,hv
+      end
+      local mnx,mny,mxx,mxy=box2d(p.aabb)
+      if mnx then
+        local bx,by,bw,bh=mnx-3,mny-3,(mxx-mnx)+6,(mxy-mny)+6
+        local c=a(base,op)
+        if cfg.esp_box then
+          if cfg.esp_boxstyle==1 then draw.CornerBox(bx,by,bw,bh,c)
+          elseif cfg.esp_boxstyle==2 then draw.Rect(bx,by,bw,bh,c,0,1)
+          else draw.RectFilled(bx,by,bw,bh,{base[1],base[2],base[3],0.15*op}); draw.Rect(bx,by,bw,bh,c,0,1) end
+        end
+        if cfg.esp_hp then local f=clamp(p.hp/(p.mhp>0 and p.mhp or 100),0,1); draw.RectFilled(bx-5,by,3,bh,{0,0,0,0.6*op}); draw.RectFilled(bx-5,by+bh*(1-f),3,bh*f,{1-f,f,0.1,op}) end
+        -- name baseline. sits above the hat apex when the hat is on, otherwise
+        -- the text covers the cone and the hat is barely visible
+        local ny=by-tsz-2
+        if hat_v and hat_y<ny then ny=hat_y-tsz-2 end
+        if cfg.esp_name and p.name then
+          local tw=ts(p.name,tsz); draw.Text(bx+bw*0.5-tw*0.5,ny,p.name, cfg.esp_chroma and c or a(col.c_name,op),tsz)
+        end
+        if cfg.esp_dist then local dl=string.format("%.0fm",dist); local tw=ts(dl,tsz-2); draw.Text(bx+bw*0.5-tw*0.5,by+bh+2,dl,{1,1,1,op},tsz-2) end
+        if cfg.esp_weapon and p.tool then local wy=by+bh+2; if cfg.esp_dist then wy=wy+(tsz-2)+1 end; local tw=ts(p.tool,tsz-2); draw.Text(bx+bw*0.5-tw*0.5,wy,p.tool,a(col.c_name,0.85*op),tsz-2) end
+        if cfg.esp_tracer then local oy=(cfg.esp_tracer_from==1) and sh or ((cfg.esp_tracer_from==3) and 0 or sh*0.5); draw.Line(cx,oy,bx+bw*0.5,by+bh, cfg.esp_chroma and c or a(col.c_tracer,op),1) end
+      end
+      if cfg.esp_head and head then
+        local sx,sy,v=AC.proj(head)
+        if v then
+          local hr=cfg.esp_head_size or 3
+          if cfg.esp_head_style==2 then draw.Circle(sx,sy,hr,a(base,op),16,math.max(1,math.floor(hr*0.4)))
+          else draw.CircleFilled(sx,sy,hr,a(base,op),12) end
+        end
+      end
+      if cfg.esp_hat and head then
+        -- wireframe "china hat": a cone built in world space around the head
+        -- bone, so it sits ON the head dot instead of being pasted on the same
+        -- pixel. roblox Y is up, so the brim ring lives in the XZ plane and the
+        -- apex sits above it. drawn as lines only - wireframe, no fill.
+        local brimy=head.y+0.44*hat_s
+        local rad=0.62*hat_s
+        local ax2,ay2,av=hat_x,hat_y,hat_v
+        local hc=cfg.esp_chroma and base or (col.c_hat or base)
+        if av then
+          local xs,ys,ds={},{},{}
+          local ok=true
+          for i=0,15 do
+            local t=i/16*math.pi*2
+            local wx=head.x+math.cos(t)*rad; local wz=head.z+math.sin(t)*rad
+            local sx,sy,v=W2S(wx,brimy,wz)
+            if not v then ok=false; break end
+            xs[i+1]=sx; ys[i+1]=sy; ds[i+1]=cam_dist(wx,brimy,wz)
+          end
+          if ok then
+            local hd=cam_dist(head.x,head.y,head.z)
+            -- rim of the brim, drawn as a closed ring
+            for i=1,16 do
+              local j=i%16+1
+              local dd=(ds[i]+ds[j])*0.5
+              local k=(dd>hd) and 0.40 or 1
+              draw.Line(xs[i],ys[i],xs[j],ys[j], a(hc,op*k*0.85), 1)
+            end
+            -- ribs from the apex down to every other rim point
+            for i=1,16,2 do
+              local k=(ds[i]>hd) and 0.40 or 1
+              draw.Line(ax2,ay2,xs[i],ys[i], a(hc,op*k), 1)
+            end
+          end
+        end
+      end
+      if cfg.esp_skel then
+        -- project each bone ONCE per player per frame. SKELETON has 9 segments and
+        -- 10 distinct bones, so the naive form issued 18 engine projections per
+        -- player. the projection is memoised on the bone itself (AC.proj), which
+        -- also removes the per-player sx_cache table - the bone tables are rebuilt
+        -- every frame, so the memo can never be stale. W2S is the dominant
+        -- per-player cost, so this is where the win is.
+        for _,pr in ipairs(SKELETON) do
+          local b1=p.bones[pr[1]]; local b2=p.bones[pr[2]]
+          if b1 and b2 then
+            local x1,y1,v1=AC.proj(b1)
+            local x2,y2,v2=AC.proj(b2)
+            if v1 and v2 then draw.Line(x1,y1,x2,y2,a(base,0.9*op),1) end
+          end
+        end
+      end
+      if cfg.esp_off and not mnx and head then
+        local ang=offscreen_dir(head.x,head.y,head.z)
+        if ang then local r=math.min(sw,sh)*0.38; local axx=cx+math.cos(ang)*r; local ayy=cy+math.sin(ang)*r; local s2=9
+          local pts={{axx+math.cos(ang)*s2,ayy+math.sin(ang)*s2},{axx+math.cos(ang+2.5)*s2,ayy+math.sin(ang+2.5)*s2},{axx+math.cos(ang-2.5)*s2,ayy+math.sin(ang-2.5)*s2}}
+          if draw.PolyFilled then pcall(draw.PolyFilled, pts, a(base,0.9*op)) else draw.CircleFilled(axx,ayy,6,a(base,0.9*op),3) end
+        end
+      end
+    end
+  end
+end
+
+local PARTCLS={Part=true,MeshPart=true,UnionOperation=true,WedgePart=true}
+local obj_cache={}; local obj_last=-1
+local function find_part(inst,depth) for _,c in ipairs(call(function() return inst:GetChildren() end) or {}) do if PARTCLS[c.ClassName] then return c end end
+  if depth>0 then for _,c in ipairs(call(function() return inst:GetChildren() end) or {}) do if c.ClassName=="Model" or c.ClassName=="Folder" then local r=find_part(c,depth-1); if r then return r end end end end return nil end
+local GADGETS={
+  Bomb={"BOMB","obj_bomb","c_bomb"}, Defuser={"DEFUSER","obj_bomb","c_bomb"},
+  Claymore={"CLAYMORE","obj_traps","c_claymore"}, ProximityAlarm={"PROX ALARM","obj_traps","c_claymore"},
+  NeedleMine={"NEEDLE MINE","obj_traps","c_claymore"}, ToxicCharge={"TOXIC","obj_traps","c_claymore"},
+  BarbedWire={"BARBED WIRE","obj_traps","c_claymore"}, ShockBattery={"SHOCK BAT","obj_traps","c_claymore"},
+  BreachCharge={"BREACH","obj_breach","c_breach"}, RemoteC4={"C4","obj_breach","c_breach"},
+  HardBreachCharge={"HARD BREACH","obj_breach","c_breach"}, ThermiteCharge={"THERMITE","obj_breach","c_breach"},
+  IncendiaryCanister={"INC CANISTER","obj_breach","c_breach"},
+  Drone={"DRONE","obj_cam","c_cam"}, StickyCamera={"STICKY CAM","obj_cam","c_cam"},
+  BulletproofCamera={"BP CAM","obj_cam","c_cam"}, DefaultCamera={"MAP CAM","obj_cam","c_cam"},
+  -- NOTE: the six grenades (StunGrenade / SmokeGrenade / EMPGrenade /
+  -- ImpactGrenade / FragGrenade / IncendiaryGrenade) used to live here too.
+  -- they are deliberately removed: scan_obj only exact-matches direct
+  -- Workspace children, while the grenade pass below is depth-tolerant,
+  -- name-tolerant and adds a trail, a ghost and a landing prediction. leaving
+  -- them in both tables would draw a world grenade twice at the same pixel.
+  DeployableShield={"SHIELD","obj_util","c_util"}, MetalBarricade={"BARRICADE","obj_util","c_util"},
+  SignalDisruptor={"JAMMER","obj_util","c_util"},
+}
+-- traps + drones + the explosives worth shooting, that aimbot and silent aim may
+-- lock onto. derived from GADGETS so a name can never be listed in two places
+-- and drift: anything filed under obj_traps or obj_cam is aim-targetable, and
+-- it carries the ESP label with it. DefaultCamera is excluded on purpose - that
+-- is the player's own map widget, not a world object, and it would otherwise
+-- drag the crosshair to the HUD.
+--
+-- the second list is explicit rather than "include all of obj_breach": taking
+-- that category wholesale would also sweep in BreachCharge, HardBreachCharge
+-- and ThermiteCharge, which is a wider net than was asked for. names are pulled
+-- from GADGETS by key so the label still has one source of truth.
+--
+--   RemoteC4           - the C4
+--   IncendiaryCanister - the incendiary canister
+--   SignalDisruptor    - jammers, under obj_util
+local AIM_EXTRA={RemoteC4=true,IncendiaryCanister=true,SignalDisruptor=true}
+local AIM_TARGETS={}
+for n,g in pairs(GADGETS) do
+  if ((g[2]=="obj_traps" or g[2]=="obj_cam") and n~="DefaultCamera") or AIM_EXTRA[n] then
+    AIM_TARGETS[n]=g[1]
+  end
+end
+-- skip lists match the grenade scan: Backpack/StarterGear hold the player's own
+-- undropped gear, and WarehouseMenu is 20+ preview Models sitting in Workspace
+-- that would otherwise register as live traps.
+local AIM_SKIPCLS={Backpack=true,StarterGear=true,PlayerGui=true,CoreGui=true,RemoteEvent=true}
+local AIM_SKIPNAME={WarehouseMenu=true,Packages=true,Items=true}
+local aim_gad_parts={}; local aim_gad_plast=-1
+local function aim_gad_scan(inst,depth)
+  for _,c in ipairs(call(function() return inst:GetChildren() end) or {}) do
+    local cn,nm
+    if not pcall(function() cn=c.ClassName end) then cn="" end
+    if not pcall(function() nm=c.Name end) then nm="" end
+    if not (AIM_SKIPCLS[cn] or AIM_SKIPNAME[nm]) then
+      local lb=AIM_TARGETS[nm]
+      if lb then
+        local prt=find_part(c,3); if prt then aim_gad_parts[#aim_gad_parts+1]={prt=prt,lb=lb} end
+      elseif depth>0 and (cn=="Model" or cn=="Folder") then
+        aim_gad_scan(c,depth-1)
+      end
+    end
+  end
+end
+local function scan_gadgets()
+  local t=now()
+  if t-aim_gad_plast>0.2 then aim_gad_plast=t
+    aim_gad_parts={}; local ws=game.Workspace; if ws then pcall(aim_gad_scan,ws,2) end
+  end
+  gadget_cache={}
+  for _,g in ipairs(aim_gad_parts) do
+    local prt=g.prt
+    if utility.IsValid(prt) then local p=prt.Position; if p then gadget_cache[#gadget_cache+1]={x=p.X,y=p.Y,z=p.Z,lb=g.lb} end end
+  end
+end
+local function model_parts(m)
+  local out={}
+  for _,c in ipairs(call(function() return m:GetDescendants() end) or {}) do
+    if PARTCLS[c.ClassName] then out[#out+1]=c; if #out>=40 then break end end
+  end
+  return out
+end
+local my_uid,my_team,my_char,ident_t=nil,nil,nil,-1
+local function local_ident()
+  local t=now(); if t-ident_t<0.5 then return end
+  ident_t=t; my_uid=nil; my_team=nil; my_char=nil
+  local lp=game.LocalPlayer; if not lp then return end
+  pcall(function() my_uid=lp.UserId end)
+  pcall(function() my_char=lp.Character end)
+  pcall(function() my_team=lp:GetAttribute("Team") end)
+  if my_team==nil and my_char then pcall(function() my_team=my_char:GetAttribute("Team") end) end
+end
+local function gadget_friendly(m)
+  local uid,tm
+  pcall(function() uid=m:GetAttribute("UserId") end)
+  pcall(function() tm=m:GetAttribute("Team") end)
+  if uid==nil and tm==nil then return false end
+  local_ident()
+  if uid~=nil and my_uid~=nil and uid==my_uid then return true end
+  if tm~=nil and my_team~=nil and tm==my_team then return true end
+  return false
+end
+local function scan_obj()
+  obj_cache={}; local ws=game.Workspace
+  for _,m in ipairs(call(function() return ws:GetChildren() end) or {}) do
+    if m.ClassName=="Model" then
+      local g=GADGETS[m.Name]
+      if g and cfg[g[2]] and not gadget_friendly(m) then local parts=model_parts(m); local prt=parts[1] or find_part(m,3)
+        if prt then
+          -- fold the model into one AABB now, stored as offsets from the part we
+          -- track. the box is then drawn per frame by translation alone, so the
+          -- hot path never re-walks (or validity-checks) every sub-part.
+          local ab=nil; local rp=prt.Position
+          if rp then
+            local ax,ay,az,bx,by,bz
+            for _,q in ipairs(parts) do
+              if utility.IsValid(q) then local qp=q.Position; local qs=q.Size
+                if qp and qs then
+                  local hx,hy,hz=qs.X*0.5,qs.Y*0.5,qs.Z*0.5
+                  local lx0,ly0,lz0=qp.X-hx,qp.Y-hy,qp.Z-hz
+                  local lx1,ly1,lz1=qp.X+hx,qp.Y+hy,qp.Z+hz
+                  if ax==nil then ax,ay,az,bx,by,bz=lx0,ly0,lz0,lx1,ly1,lz1
+                  else
+                    if lx0<ax then ax=lx0 end; if ly0<ay then ay=ly0 end; if lz0<az then az=lz0 end
+                    if lx1>bx then bx=lx1 end; if ly1>by then by=ly1 end; if lz1>bz then bz=lz1 end
+                  end
+                end
+              end
+            end
+            if ax then
+              ab={ax-rp.X,ay-rp.Y,az-rp.Z,bx-rp.X,by-rp.Y,bz-rp.Z}
+              -- pull every object box in 10%, then another 25% on top of that
+              -- (0.90 * 0.75), around its centre so the wireframe hugs the model.
+              local cx,cy,cz=(ab[1]+ab[4])*0.5,(ab[2]+ab[5])*0.5,(ab[3]+ab[6])*0.5
+              local k=0.675
+              ab[1]=cx+(ab[1]-cx)*k; ab[4]=cx+(ab[4]-cx)*k
+              ab[2]=cy+(ab[2]-cy)*k; ab[5]=cy+(ab[5]-cy)*k
+              ab[3]=cz+(ab[3]-cz)*k; ab[6]=cz+(ab[6]-cz)*k
+            end
+          end
+          obj_cache[#obj_cache+1]={part=prt,aabb=ab,label=g[1],ck=g[3]}
+        end
+      end
+    end
+  end
+end
+-- world-object outline: ONE 3D wireframe box around the whole object, built from
+-- the combined world-space AABB of all its parts. a per-part version was stroking
+-- 12 lines per sub-part for dozens of sub-parts per object and crushed the
+-- framerate; folding the parts into a single AABB and drawing one box is the
+-- cheap version. the AABB is folded ONCE per scan and stored as offsets from the
+-- tracked part, so the per-frame cost is 8 projections and 12 lines - the part
+-- list is not re-walked or re-validated at all.
+--
+-- corners live in reusable preallocated buffers, so drawing costs no per-frame
+-- allocations. an edge is stroked only when BOTH endpoints project in front of the
+-- camera within a generous screen margin, so a behind-camera corner cannot drag a
+-- line across the screen (the stray-line artifact).
+local OBJ_TW={}; local obj_twsz=nil
+local OUT_C={}
+for i=1,8 do OUT_C[i]={0,0,false} end
+local OUT_S={{-1,-1,-1},{1,-1,-1},{-1,1,-1},{1,1,-1},{-1,-1,1},{1,-1,1},{-1,1,1},{1,1,1}}
+-- the 12 edges of a cube, as index pairs into OUT_S / OUT_C.
+local OUT_E={{1,2},{2,4},{4,3},{3,1},{5,6},{6,8},{8,7},{7,5},{1,5},{2,6},{3,7},{4,8}}
+-- screen bounds of the last box drawn, so labels can sit just outside it:
+-- OUT_FIT = {minx,miny,maxx,maxy,any}. any=false means nothing projected.
+local OUT_FIT={0,0,0,0,false}
+local function outline_object(o,c,sw,sh)
+  OUT_FIT[5]=false
+  local ab=o.aabb; if not ab then return end
+  local pos=o.part.Position; if not pos then return end
+  local x0,y0,z0=pos.X+ab[1],pos.Y+ab[2],pos.Z+ab[3]
+  local x1,y1,z1=pos.X+ab[4],pos.Y+ab[5],pos.Z+ab[6]
+  local limx,limy=sw*1.5,sh*1.5
+  local mnx,mny,mxx,mxy=1e9,1e9,-1e9,-1e9
+  for i=1,8 do local s=OUT_S[i]
+    local wx=(s[1]>0) and x1 or x0
+    local wy=(s[2]>0) and y1 or y0
+    local wz=(s[3]>0) and z1 or z0
+    local sx,sy,v=W2S(wx,wy,wz)
+    local p=OUT_C[i]
+    if v and sx>=-limx and sx<=limx and sy>=-limy and sy<=limy then
+      p[1]=sx; p[2]=sy; p[3]=true
+      if sx<mnx then mnx=sx end; if sx>mxx then mxx=sx end
+      if sy<mny then mny=sy end; if sy>mxy then mxy=sy end
+    else
+      p[3]=false
+    end
+  end
+  for i=1,12 do local e=OUT_E[i]; local a1=OUT_C[e[1]]; local b1=OUT_C[e[2]]
+    if a1[3] and b1[3] then draw.Line(a1[1],a1[2],b1[1],b1[2],c,1.3) end
+  end
+  if mnx<=mxx then
+    OUT_FIT[1]=mnx; OUT_FIT[2]=mny; OUT_FIT[3]=mxx; OUT_FIT[4]=mxy; OUT_FIT[5]=true
+  end
+end
+-- see TUNE.esp_alpha_floor: the draw primitives auto-include an opaque black
+-- shadow pass that the color alpha cannot reach, so the bottom of the opacity
+-- range has to be an off band rather than a fade. shared by both ESP surfaces.
+local function run_obj_esp()
+  if not cfg.obj_on then return end
+  -- same shadow-pass caveat as esp_alpha (see run_esp): fading the fill alone
+  -- leaves the renderer's baked black shadow at full strength, so the low end of
+  -- this slider is an off band rather than a fade. 0 is equivalent to obj_on=false.
+  local op=clamp((cfg.obj_alpha or 100)/100,0,1)
+  if op<TUNE.obj_alpha_floor then return end
+  local tsz=cfg.obj_textsize or 12
+  if obj_twsz~=tsz then OBJ_TW={}; obj_twsz=tsz end
+  local t=now(); if t-obj_last>1 then obj_last=t; pcall(scan_obj) end
+  local sw,sh=scr()
+  local tsz2=math.max(8,tsz-1)
+  for _,o in ipairs(obj_cache) do
+    if utility.IsValid(o.part) then local pos=o.part.Position
+      if pos then local dist=cam_dist(pos.X,pos.Y,pos.Z)
+        if cfg.obj_maxdist>=3000 or dist<=cfg.obj_maxdist then local c=a(col[o.ck],op)
+          local drawb=cfg.obj_outline and o.aabb
+          if drawb then outline_object(o,(op>0.9) and a(col[o.ck],0.9) or c,sw,sh) end
+          -- labels sit just outside the box: name centred above its top edge,
+          -- distance centred below its bottom edge. without a box (toggle off, or
+          -- nothing projected) they fall back to the midpoint marker. the x is
+          -- clamped so a box edge near the screen border still keeps its text on
+          -- screen. when neither a box nor the midpoint is on screen, skip them.
+          local lx,ty,by,show
+          if drawb and OUT_FIT[5] then
+            lx=(OUT_FIT[1]+OUT_FIT[3])*0.5
+            ty=OUT_FIT[2]-tsz-2; by=OUT_FIT[4]+2; show=true
+          else
+            local sx,sy,v=W2S(pos.X,pos.Y,pos.Z)
+            lx=sx; ty=sy-tsz-2; by=sy+4; show=v
+          end
+          if show and cfg.obj_names then
+            local tw=OBJ_TW[o.label]
+            if not tw then tw=ts(o.label,tsz); OBJ_TW[o.label]=tw end
+            local px=clamp(lx-tw*0.5,2,sw-tw-2)
+            draw.Text(px,ty,o.label,c,tsz)
+          end
+          if show and cfg.obj_dist then local dl=string.format("%.0fm",dist); local tw=ts(dl,tsz2)
+            local px=clamp(lx-tw*0.5,2,sw-tw-2)
+            draw.Text(px,by,dl,{1,1,1,op},tsz2)
+          end
+        end
+      end
+    end
+  end
+end
+
+-- ===========================================================================
+-- GRENADES
+--
+-- scan_obj() walks Workspace's direct children and matches an exact model
+-- name. That is correct for static deployables - they are parented straight
+-- into Workspace and keep the same name forever - but it structurally cannot
+-- see a thrown grenade, for four independent reasons:
+--
+--   1. depth. projectiles are parked under a container, never in the root.
+--      the hierarchy dump shows the held copy at
+--      Workspace.<player>.Backpack.Items.FragGrenade - three levels down.
+--   2. name. the game renames these in flight (FragGrenadeProjectile,
+--      StunGrenadeProj, ...), so GADGETS["FragGrenade"] never matches.
+--   3. lifetime. a flash lives about three seconds. obj_last throttles the
+--      generic scan to a full second, so a grenade can be created AND
+--      detonated entirely inside one interval and is never observed at all.
+--   4. obj_nade shipped defaulting to false.
+--
+-- so grenades get their own pass with its own rules:
+--   - descent that stops at Backpack/StarterGear, so a held grenade is never
+--     mistaken for a projectile
+--   - ordered substring classification with word-boundary checks, so
+--     FragGrenadeProjectile / FragGrenade / Frag all resolve to one entry
+--   - a 100ms discovery tick over the root and any container a grenade has
+--     already been seen in, backed by a sliced sweep of the rest of the tree.
+--     position is still read live every single frame; the tick only controls
+--     how fast a NEW grenade is noticed. see "discovery cost" below for why
+--     the sweep is sliced rather than run in one pass.
+--
+-- no team filtering: every grenade found is drawn. ownership used to be read
+-- from StateObject.owner and resolved against the character index, but with
+-- no friendly/enemy split to drive there is nothing left to decide, so the
+-- owner lookup and the character address index were removed rather than left
+-- as dead weight.
+-- ===========================================================================
+
+-- exact names first: a hit here short-circuits the substring pass
+-- the whole grenade subsystem lives in its own scope: the main chunk was
+-- running out of the 200-local budget, and this block owns 32 of them.
+local ND = (function()
+  local NADE_EXACT={
+    StunGrenade="FLASH", SmokeGrenade="SMOKE", EMPGrenade="EMP",
+    ImpactGrenade="IMPACT", FragGrenade="FRAG", IncendiaryGrenade="INCENDIARY",
+    Grenade="FRAG", Nade="FRAG",
+  }
+  -- substring fallbacks, MOST SPECIFIC FIRST. order is the whole algorithm: the
+  -- first hit wins, so FragGrenadeProjectile must be tested before the bare
+  -- Grenade rule or every grenade would classify as FRAG.
+  local NADE_SUBSTR={
+    {"stungenadeprojectile","FLASH"},{"stungenadeproj","FLASH"},{"stungenade","FLASH"},
+    {"stunbang","FLASH"},{"flashgrenade","FLASH"},{"flash","FLASH"},
+    {"smokenadeprojectile","SMOKE"},{"smokegrenadeproj","SMOKE"},{"smokegrenade","SMOKE"},
+    {"smoke","SMOKE"},
+    {"empgrenadeprojectile","EMP"},{"empgrenadeproj","EMP"},{"empgrenade","EMP"},{"emp","EMP"},
+    {"impactgrenadeprojectile","IMPACT"},{"impactgrenadeproj","IMPACT"},{"impactgrenade","IMPACT"},
+    {"impact","IMPACT"},
+    {"fraggrenadeprojectile","FRAG"},{"fraggrenadeproj","FRAG"},{"fraggrenade","FRAG"},{"frag","FRAG"},
+    {"incendiarygrenadeprojectile","INCENDIARY"},{"incendiarygrenadeproj","INCENDIARY"},
+    {"incendiarygrenade","INCENDIARY"},{"incendiary","INCENDIARY"},
+  }
+  -- never descend into these: Backpack holds every player's held equipment,
+  -- which would otherwise light up as a wall of grenades. IncendiaryCanister
+  -- is deliberately absent from NADE_SUBSTR - it is already a breach gadget and
+  -- matching it here would draw it twice.
+  local NADE_SKIPCLS={Backpack=true,StarterGear=true,PlayerGui=true,CoreGui=true,RemoteEvent=true}
+  local NADE_SKIPNAME={WarehouseMenu=true,Packages=true,Items=true}
+
+  local function nade_wordhit(lo,pat,i)
+    local pre,post=lo:sub(1,i-1),lo:sub(i+#pat)
+    return (pre=="" or pre:sub(-1)=="_" or pre:sub(-1)==" ")
+       and (post=="" or post=="_" or post==" " or post=="0" or post=="1" or post=="2")
+  end
+  local function nade_label_slow(nm)
+    local l=NADE_EXACT[nm]; if l then return l end
+    local lo=string.lower(nm)
+    for _,r in ipairs(NADE_SUBSTR) do
+      local i=string.find(lo,r[1],1,true)
+      if i and nade_wordhit(lo,r[1],i) then return r[2] end
+    end
+    return nil
+  end
+
+  -- the walk touches ~75k instances but there are only ~15.5k distinct names in
+  -- the place, and a fifth of all instances are called "Part". nade_label was the
+  -- hot path: string.lower allocates a fresh string per call and the substring
+  -- table is 35 ordered finds, so an uncached visit costs 2 allocations + up to 35
+  -- search passes. at 150 visits/tick that is ~315k string.find calls a second
+  -- before any drawing happens - the sweep made the frame cost constant but did
+  -- not make it small.
+  --
+  -- caching by name collapses every repeat to one table hit. the miss path runs
+  -- at most once per distinct name for the life of the session.
+  --
+  -- the cache is keyed by instance NAME, and the place has ~15.5k distinct names.
+  -- that is bounded by the content, but a game that spawns uniquely-named parts
+  -- ("Debris17", "Debris18", ...) would push it up without limit, which is the
+  -- same failure mode as the unbounded vm_seen table. so the cache is capped.
+  --
+  -- the cap is deliberately a ceiling and not a reset: once it is reached, new
+  -- names are simply not cached and every lookup for them falls back to the
+  -- slow path. resetting instead would evict the 15.5k names that DO repeat and
+  -- turn every lookup into the slow path, which is far worse than the memory
+  -- it was trying to save.
+  local NADE_CACHE_MAX=32768
+  local nade_lbl_cache={}
+  local nade_lbl_n=0
+  local function nade_label(nm)
+    local hit=nade_lbl_cache[nm]
+    if hit~=nil then
+      if hit==false then return nil end
+      return hit
+    end
+    local l=nade_label_slow(nm)
+    if nade_lbl_n<NADE_CACHE_MAX then
+      nade_lbl_cache[nm]=l or false
+      nade_lbl_n=nade_lbl_n+1
+    end
+    return l
+  end
+
+  -- same story for the descent test, which was doing its own second string.lower
+  -- over the same name on every visit
+  local nade_desc_cache={}
+  local nade_desc_n=0
+  local function nade_maydescend(nm)
+    local hit=nade_desc_cache[nm]
+    if hit~=nil then return hit end
+    local lo=string.lower(nm); local r=false
+    for _,h in ipairs(NADE_DESCEND) do
+      if string.find(lo,h,1,true) then r=true break end
+    end
+    if nade_desc_n<NADE_CACHE_MAX then
+      nade_desc_cache[nm]=r
+      nade_desc_n=nade_desc_n+1
+    end
+    return r
+  end
+
+  local nade_track={}
+  local nade_last=-1
+  -- a record not rediscovered within this many discovery ticks is dead and gets
+  -- dropped. discovery runs every 100ms, so ~350ms of grace across 3 ticks.
+  local NADE_STALE=0.35
+
+  -- grenade root is a UnionOperation named Root in this game (see the dump), but
+  -- fall back to any geometry so a stripped-down projectile still resolves
+  local function nade_root(m)
+    local cn; pcall(function() cn=m.ClassName end)
+    if PARTCLS[cn] then return m end
+    local r=call(function() return m:FindFirstChild("Root") end)
+    if r and PARTCLS[r.ClassName] then return r end
+    local ps=model_parts(m); return ps[1]
+  end
+
+  -- an already-tracked grenade only needs its liveness stamp refreshed. resolving
+  -- the root part again meant a GetDescendants (which allocates a fresh table of
+  -- every descendant) plus nade_trans's GetChildren on every single rediscovery,
+  -- for every grenade, on a 100ms tick. the geometry does not move between
+  -- frames - only its Position does, and run_nades reads that live - so the part
+  -- is resolved once at discovery and reused from then on.
+  local function nade_add(m,lb)
+    local ad; if not pcall(function() ad=m.Address end) or not ad or ad==0 then return end
+    local t=now()
+    local r=nade_track[ad]
+    if r then r.seen=t return end
+    local root=nade_root(m); if not root then return end
+    r={part=root,host=m,lb=lb,seen=t}
+    nade_track[ad]=r
+  end
+
+  -- a projectile the game already hid for this client (first-person throw) must
+  -- not put a marker on your own hand
+  local function nade_trans(o)
+    local cn; pcall(function() cn=o.ClassName end)
+    if PARTCLS[cn] then local tr; if pcall(function() tr=o.Transparency end) then return tr end return nil end
+    local r=call(function() return o:FindFirstChild("Root") end)
+    if r then local tr; if pcall(function() tr=r.Transparency end) then return tr end end
+    for _,c in ipairs(call(function() return o:GetChildren() end) or {}) do
+      if PARTCLS[c.ClassName] then local tr; if pcall(function() tr=c.Transparency end) then return tr end end
+    end
+    return nil
+  end
+
+  -- ===========================================================================
+  -- discovery cost
+  --
+  -- the first version walked the whole place on a timer: depth 3 from Workspace
+  -- every 100ms, running ~35 substring matches against the name of every instance
+  -- it passed. that is O(world) rather than O(grenades), and this place has ~100k
+  -- instances - 23 WarehouseMenu models of 68 children each, every character,
+  -- the viewmodels, all of RobloxGui. the symptom was exactly what turning
+  -- grenade ESP on did: the overlay crawled to ~20fps and every other ESP
+  -- stalled behind it, because the walk ran inline inside run_nades on the exact
+  -- frame it came due.
+  --
+  -- discovery is now split by what each path costs:
+  --
+  --   root + cached parents. workspace direct children, plus any container a
+  --   grenade has actually been seen in, get listed on a 100ms tick. that is
+  --   O(grenades). once the game has shown us where it parents projectiles this
+  --   is the only path doing real work, and it catches a grenade on the tick it
+  --   appears - which is what the world walk was supposedly buying.
+  --
+  --   sliced cursor sweep. a resumable walk over the whole tree that spends a
+  --   fixed number of instances per tick instead of finishing in one go. per
+  --   frame cost is now constant regardless of world size, and this path can
+  --   still reach any container, so nothing is permanently undiscoverable just
+  --   because it sits somewhere the name hints miss. it only takes a few ticks
+  --   longer to arrive.
+  --
+  -- position is still read live every frame for known grenades, so markers track
+  -- smoothly - only the "notice a new one" step got cheaper.
+  -- ===========================================================================
+
+  -- descend into subtrees whose name suggests dynamic objects. a fast path on top
+  -- of the sweep, not the only path: it makes the usual containers cheap to reach
+  -- and the sweep stays the safety net for anything named unusually.
+  -- every hint here is matched as a SUBSTRING, so short generic ones are traps.
+  -- "ent" alone matched RobloxGui's "Components" (compon-ENT-s) 104 times and
+  -- dragged the sweep into a quarter of the UI tree looking for grenades. the
+  -- list is now specific words only - anything generic was doing more harm than
+  -- the fast path was worth, and the sliced sweep below is the real safety net
+  -- anyway, so a narrow list costs nothing but a few ticks of latency.
+  local NADE_DESCEND={"grenade","nade","projectile","proj","debris","effect",
+    "backpack","inventory","weapon","cache","spawn","container","throwable"}
+
+  local nade_parents={}    -- Address -> container instance, see nade_remember
+  local nade_sweep={}      -- resumable walk frames
+  -- per-visit cost is now two cached table lookups plus a class/name read, so a
+  -- visit is roughly a hundred times cheaper than it was when this budget was set
+  -- to 150 against a 35-pass substring scan. 40 keeps a full cycle over the ~100k
+  -- instances in the place down to a few seconds while staying far below the cost
+  -- of the drawing it guards.
+  local nade_slice=40      -- per-call default, see nade_discover for the schedule
+
+  -- keyed by ADDRESS, never by the instance itself.
+  --
+  -- this table used to be keyed by the instance userdata, and that was the source
+  -- of a steady slide from 1000fps to 300fps over the course of a match.
+  -- GetChildren hands back a fresh userdata wrapper for the same underlying
+  -- instance on every call, so each rediscovery of one container inserted a *new*
+  -- key instead of refreshing the old one. entries were only ever dropped when
+  -- utility.IsValid reported a dead instance - and a stale wrapper whose parent is
+  -- still alive passes that check - so the table grew for the whole session while
+  -- the 100ms tick iterated, and ran GetChildren over, every wrapper ever seen.
+  --
+  -- Address is a stable integer for a given instance, so rediscovering a container
+  -- collapses onto one key and the table stays proportional to the handful of
+  -- places grenades actually live in.
+  local function nade_remember(inst)
+    if not inst then return end
+    local ad; if not pcall(function() ad=inst.Address end) or not ad or ad==0 then return end
+    if nade_parents[ad] then return end
+    nade_parents[ad]=inst
+  end
+
+  -- classify a single instance. shared by both paths. returns whether to descend.
+  local function nade_visit(c,parent,depth)
+    local cn,nm
+    if not pcall(function() cn=c.ClassName end) then cn="" end
+    if not pcall(function() nm=c.Name end) then nm="" end
+    if NADE_SKIPCLS[cn] or NADE_SKIPNAME[nm] then return false end
+    local lb=nade_label(nm)
+    if lb and (cn=="Model" or PARTCLS[cn]) then
+      local tr=nade_trans(c)
+      if tr==nil or tr<0.95 then nade_add(c,lb); nade_remember(parent) end
+      return false
+    end
+    if depth<=0 or not (cn=="Model" or cn=="Folder") then return false end
+    return nade_maydescend(nm)
+  end
+
+  -- flat listing of one container we already trust. no recursion, no descent test.
+  local function nade_scan_container(inst)
+    local cs=call(function() return inst:GetChildren() end)
+    if not cs or not cs[1] then return end
+    for _,c in ipairs(cs) do nade_visit(c,inst,0) end
+  end
+
+  -- resumable walk: at most slice instances this tick, then it resumes next tick.
+  local function nade_sweep_tick(slice)
+    if #nade_sweep==0 then
+      local ws=game.Workspace; if not ws then return end
+      local cs=call(function() return ws:GetChildren() end)
+      if cs then nade_sweep[1]={cs=cs,i=1,inst=ws,depth=3} end
+    end
+    local budget=slice or nade_slice
+    while budget>0 and #nade_sweep>0 do
+      local fr=nade_sweep[#nade_sweep]
+      if fr.i>#fr.cs then nade_sweep[#nade_sweep]=nil
+      else
+        local c=fr.cs[fr.i]; fr.i=fr.i+1; budget=budget-1
+        if nade_visit(c,fr.inst,fr.depth) and fr.depth>0 then
+          local cs=call(function() return c:GetChildren() end)
+          if cs and cs[1] then
+            nade_sweep[#nade_sweep+1]={cs=cs,i=1,inst=c,depth=fr.depth-1}
+          end
+        end
+      end
+    end
+  end
+
+  -- the sweep is the fallback for containers the name hints miss, not the primary
+  -- path. running a slice on every rendered frame made its cost scale with
+  -- framerate - 40k visits/sec at 1000fps, 12k at 300 - so the fallback quietly
+  -- became a large share of the frame budget on fast machines, which is the worst
+  -- place to pay it. it is now driven off wall time instead, so it costs the same
+  -- regardless of how fast the game happens to be running, and a faster slice
+  -- keeps coverage just as quick.
+  local nade_sweep_last=-1
+  local NADE_SWEEP_EVERY=0.4
+  local NADE_SWEEP_SLICE=300
+
+  local function nade_discover()
+    local t=now()
+    if t-nade_sweep_last>=NADE_SWEEP_EVERY then
+      nade_sweep_last=t
+      pcall(nade_sweep_tick,NADE_SWEEP_SLICE)
+    end
+    if t-nade_last>=0.1 then
+      nade_last=t
+      local ws=game.Workspace
+      if ws then nade_scan_container(ws) end
+      for ad,inst in pairs(nade_parents) do
+        if utility.IsValid(inst) then nade_scan_container(inst) else nade_parents[ad]=nil end
+      end
+    end
+    -- not rediscovered this tick: the game destroyed the model. drop the record
+    for ad,r in pairs(nade_track) do
+      if t-r.seen>NADE_STALE then nade_track[ad]=nil end
+    end
+  end
+
+  local function run_nades()
+    if not cfg.obj_on or not cfg.obj_nade then return end
+    -- grenades live under the Objective ESP panel, so obj_alpha/obj_textsize have to
+    -- reach them too. floor check comes before nade_discover so a fully-transparent
+    -- slider also stops the discovery walk, not just the drawing.
+    local op=clamp((cfg.obj_alpha or 100)/100,0,1)
+    if op<TUNE.obj_alpha_floor then return end
+    nade_discover()
+    local tsz=cfg.obj_textsize or 12
+    local base=col.c_nade
+    local c={base[1],base[2],base[3],(base[4] or 1)*op}
+    for ad,r in pairs(nade_track) do
+      local prt=r.part
+      if prt and utility.IsValid(prt) then
+        local p; if pcall(function() p=prt.Position end) and p then
+          local dist=cam_dist(p.X,p.Y,p.Z)
+          if cfg.obj_maxdist>=3000 or dist<=cfg.obj_maxdist then
+            local sx,sy,v=W2S(p.X,p.Y,p.Z)
+            if v and sx~=0 and sy~=0 then
+              draw.CircleFilled(sx,sy,3,c,12)
+              if cfg.obj_names then
+                local tw=ts(r.lb,tsz); draw.Text(sx-tw*0.5,sy-tsz-3,r.lb,c,tsz)
+              end
+              if cfg.obj_dist then
+                local dl=string.format("%.0fm",dist); local tsz2=math.max(8,tsz-1); local tw=ts(dl,tsz2)
+                draw.Text(sx-tw*0.5,sy+5,dl,{1,1,1,0.85*op},tsz2)
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  -- only the entry point leaves this scope; everything else above stays private
+  return { run_nades = function() return run_nades() end }
+end)()
+
+-- spin angle is integrated from the frame delta rather than read off the clock,
+-- so the speed slider means the same thing at 60/144/240fps. wrapped to 2pi so a
+-- long session cannot bleed precision out of the trig.
+local xh_ang=0
+local TAU=math.pi*2
+local function xh_rot(cx,cy,ang)
+  local co=math.cos(ang); local si=math.sin(ang)
+  return function(x,y)
+    local dx,dy=x-cx,y-cy
+    return cx+dx*co-dy*si, cy+dx*si+dy*co
+  end
+end
+
+local function run_crosshair()
+  if not cfg.xh_on then return end
+  local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5; local s=cfg.xh_size; local gp=cfg.xh_gap; local th=cfg.xh_thick; local c=a(col.c_xh,1); local st=cfg.xh_style
+  if cfg.xh_spin then
+    xh_ang=(xh_ang+(cfg.xh_speed or 0)*math.pi/180*_dt)%TAU
+  end
+  local ang=cfg.xh_spin and xh_ang or 0
+  local R=xh_rot(cx,cy,ang)
+  if st==1 then
+    local x1,y1=R(cx-gp-s,cy); local x2,y2=R(cx-gp,cy)
+    local x3,y3=R(cx+gp,cy);   local x4,y4=R(cx+gp+s,cy)
+    local x5,y5=R(cx,cy-gp-s); local x6,y6=R(cx,cy-gp)
+    local x7,y7=R(cx,cy+gp);   local x8,y8=R(cx,cy+gp+s)
+    draw.Line(x1,y1,x2,y2,c,th); draw.Line(x3,y3,x4,y4,c,th)
+    draw.Line(x5,y5,x6,y6,c,th); draw.Line(x7,y7,x8,y8,c,th)
+  elseif st==2 then draw.CircleFilled(cx,cy,th+1,c,10)
+  elseif st==3 then draw.Circle(cx,cy,s,c,24,th)
+  elseif st==4 then
+    local x1,y1=R(cx-gp-s,cy); local x2,y2=R(cx-gp,cy)
+    local x3,y3=R(cx+gp,cy);   local x4,y4=R(cx+gp+s,cy)
+    local x5,y5=R(cx,cy+gp);   local x6,y6=R(cx,cy+gp+s)
+    draw.Line(x1,y1,x2,y2,c,th); draw.Line(x3,y3,x4,y4,c,th)
+    draw.Line(x5,y5,x6,y6,c,th)
+  elseif st==5 then
+    -- two triangles at 60 degrees, sharing the same circumcircle. radius r is
+    -- sized off xh_size, and xh_gap pushes the whole star out from center.
+    local r=gp+s
+    local h=r*math.sqrt(3)*0.5
+    local ux,uy=R(cx,cy-r);     local lx,ly=R(cx-h,cy+r*0.5); local rx2,ry2=R(cx+h,cy+r*0.5)
+    local dx,dy=R(cx,cy+r);     local l2x,l2y=R(cx-h,cy-r*0.5); local r2x,r2y=R(cx+h,cy-r*0.5)
+    pcall(draw.PolyClosed,{{ux,uy},{lx,ly},{rx2,ry2}},c,th)
+    pcall(draw.PolyClosed,{{dx,dy},{l2x,l2y},{r2x,r2y}},c,th)
+  end
+  if cfg.xh_dot then draw.CircleFilled(cx,cy,th,c,8) end
+end
+
+local function run_radar()
+  if not cfg.rad_on then return end
+  local sw,sh=scr(); local rsz=cfg.rad_size; local rng=cfg.rad_range
+  local rx=sw*(cfg.rad_x/100)-rsz*0.5; local ry=sh*(cfg.rad_y/100); local al=cfg.rad_alpha/100
+  draw.RectFilled(rx,ry,rsz,rsz,{0,0,0,0.55*al},6); draw.Rect(rx,ry,rsz,rsz,{1,1,1,0.1*al},6,1)
+  local cx=rx+rsz*0.5; local cy=ry+rsz*0.5
+  draw.Line(cx,ry+2,cx,ry+rsz-2,{1,1,1,0.08*al},1); draw.Line(rx+2,cy,rx+rsz-2,cy,{1,1,1,0.08*al},1)
+  draw.CircleFilled(cx,cy,3,{0.3,1,0.5,al},10)
+  local look=camera.GetLookVector(); local cam=camera.GetPosition(); if not look or not cam then return end
+  -- project into the camera's horizontal frame using the engine's own right
+  -- vector, the same one offscreen_dir uses: (-look.Z, 0, look.X). deriving it
+  -- matters - assuming the opposite handedness mirrors the whole radar, so a
+  -- target you are looking straight at sits off to one side.
+  local fx,fz=look.X,look.Z
+  local fl=math.sqrt(fx*fx+fz*fz); if fl<1e-6 then fl=1 end fx,fz=fx/fl,fz/fl
+  local rtx,rtz=-fz,fx
+  for _,p in ipairs(vm_players) do
+    -- team check. the radar was drawing every entry in vm_players in enemy red,
+    -- so a teammate showed up as a hostile contact - the one overlay where
+    -- "who is on my side" was unanswerable. p.friend is the same flag the
+    -- player ESP filters on, so the two now agree on who is who.
+    --
+    -- defaulting ON: the rest of the file treats "Team Check" as opt-in
+    -- filtering (aim_team and silent_team both default true) and spells the
+    -- inverted sense as "Show Teammates", which is esp_team. this panel uses
+    -- the opt-in name so it reads like its two siblings.
+    if not (cfg.rad_team and p.friend) then
+      local head=p.bones.head or p.bones.torso
+      if head then
+        local dx=head.x-cam.X; local dz=head.z-cam.Z
+        local dist=math.sqrt(dx*dx+dz*dz)
+        if dist<=rng then
+          local fwd=dx*fx+dz*fz
+          local side=dx*rtx+dz*rtz
+          local px=cx+side*(rsz*0.5-6)/rng
+          local py=cy-fwd*(rsz*0.5-6)/rng
+          -- a teammate shown because Team Check is off is dimmed and drawn
+          -- hollow-ish rather than in the enemy red, so "on screen" never
+          -- reads as "hostile"
+          local c=col.c_enemy
+          local ca=al
+          if p.friend then
+            c=col.c_util; ca=al*0.55
+          end
+          draw.CircleFilled(px,py,3,{c[1],c[2],c[3],ca},8)
+        end
+      end
+    end
+  end
+  draw.Text(rx+4,ry+rsz-13,"RADAR",{1,1,1,0.4*al},9)
+end
+
+local function run_alert()
+  if not cfg.alert_on then return end
+  local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5
+  local cam=camera.GetPosition(); local look=camera.GetLookVector(); if not cam or not look then return end
+  local ll=math.sqrt((look.X or 0)^2+(look.Z or 0)^2); if ll<1e-4 then ll=1 end
+  local lx,lz=(look.X or 0)/ll,(look.Z or 0)/ll
+  local maxd2=cfg.alert_dist*cfg.alert_dist; local nearest,nd=nil,1e18
+  for _,p in ipairs(vm_players) do
+    local b=p.bones.head or p.bones.torso
+    if b then local dx,dz=b.x-cam.X,b.z-cam.Z; local d2=dx*dx+dz*dz
+      if d2<=maxd2 then local dl=math.sqrt(d2); if dl<1e-4 then dl=1 end
+        local dot=(dx/dl)*lx+(dz/dl)*lz
+        if dot< -0.15 and d2<nd then nd=d2; nearest=b end
+      end
+    end
+  end
+  if nearest then
+    local pulse=0.5+0.5*math.sin(now()*6)
+    local txt="! FLANK"; local tw=ts(txt,16)
+    draw.Text(cx-tw*0.5,cy+94,txt,{1,0.3,0.3,0.55+0.45*pulse},16)
+    local ang=offscreen_dir(nearest.x,nearest.y,nearest.z)
+    if ang then local r=115; local axx=cx+math.cos(ang)*r; local ayy=cy+math.sin(ang)*r; local s2=12
+      local pts={{axx+math.cos(ang)*s2,ayy+math.sin(ang)*s2},{axx+math.cos(ang+2.5)*s2,ayy+math.sin(ang+2.5)*s2},{axx+math.cos(ang-2.5)*s2,ayy+math.sin(ang-2.5)*s2}}
+      if draw.PolyFilled then pcall(draw.PolyFilled,pts,{1,0.3,0.3,0.85}) else draw.CircleFilled(axx,ayy,8,{1,0.3,0.3,0.85},3) end
+    end
+  end
+end
+
+-- HUD chrome shared by the watermark / keybind list / feature bar so all three
+-- read as one family instead of three unrelated boxes: the menu's stacked shadow
+-- shells, base fill, single frame plus inner echo line, the accent rule pinned
+-- to the top edge, and the tapered corner brackets. ap is the element's own
+-- appear animation, r the corner radius.
+local function hud_panel(x,y,w,h,ap,r)
+  r=r or theme.round
+  local e=mix(theme.accent,theme.accent2,0.5)
+  for i=3,1,-1 do
+    draw.RectFilled(x-i*2, y-i*1.5, w+i*4, h+i*3, {0,0,0,0.07*ap}, r+i*2)
+  end
+  draw.RectFilled(x,y,w,h, {theme.base[1],theme.base[2],theme.base[3],0.90*ap}, r)
+  draw.Rect(x,y,w,h, a(theme.line,0.85*ap), r, 1)
+  draw.Rect(x+3,y+3,w-6,h-6, a(theme.line,0.16*ap), r, 1)
+  draw.RectFilled(x+r, y, w-r*2, 2, {e[1],e[2],e[3],0.9*ap}, 0)
+  corners(x,y,w,h, 15, a(e,0.95*ap), 2, a(e,0.4*ap))
+end
+-- same section header the menu draws: index chip, tracked-out caps label, and a
+-- hairline rule that runs out to the panel edge
+local function hud_head(x,y,w,idx,label)
+  local nw=ts(idx,10)
+  draw.RectFilled(x,y,nw+8,13, a(theme.accent,0.16), 2)
+  draw.Text(x+4,y+2,idx, a(theme.accent,0.95), 10)
+  local caps=string.upper(label); local hw=ts(caps,11)
+  draw.Text(x+nw+15,y+1,caps, a(theme.faint,1), 11)
+  local lx=x+nw+hw+23
+  if lx<x+w then draw.Line(lx,y+9,x+w,y+9, a(theme.line,0.45), 1) end
+end
+
+local start_t=now()
+local function run_hud()
+  local sw,sh=scr()
+  -- one approach curve per element rather than a shared value, so the three
+  -- panels do not snap in on the same frame and read as one block
+  local apm=approach("hud_apm", cfg.hud_mark and 1 or 0, 17)
+  local apk=approach("hud_apk", cfg.hud_keys and 1 or 0, 15)
+  local apb=approach("hud_apb", cfg.hud_bar and 1 or 0, 16)
+
+  -- ---------------------------------------------------------- watermark
+  if apm>0.01 then
+    local fps=math.floor((utility.GetFPS and utility.GetFPS()) or (_dt>0 and 1/_dt) or 0)
+    local up=now()-start_t
+    local ut = up<60 and string.format("%ds",math.floor(up))
+      or (up<3600 and string.format("%dm",math.floor(up/60)))
+      or string.format("%dh%02dm",math.floor(up/3600),math.floor((up%3600)/60))
+    local ft=string.format("%d FPS",fps)
+    local lw=ts("Ego",14); local fw=ts(ft,11); local uw=ts(ut,11)
+    local pw=14+lw+9+1+11+fw+9+uw+14; local ph=30
+    local mp=hud_pos.mark
+    local wx=mp and mp.x or (sw-pw-16); local wy=mp and mp.y or 14
+    if wx+pw>sw then wx=sw-pw end; if wy+ph>sh then wy=sh-ph end
+    -- draggable like the keybind list: grab the panel itself while the menu is
+    -- open, because with the menu closed every click belongs to the game.
+    if ui.open and inside(wx,wy,pw,ph) and ui.m.click and not ui.drag then
+      hud_pos.mark={x=wx,y=wy}
+      ui.drag={k="hud_mark",ox=ui.m.x-wx,oy=ui.m.y-wy}; ui.m.click=false
+    end
+    hud_panel(wx,wy,pw,ph,apm,3)
+    if ui.open then
+      local mgx,mgy=wx+pw-14,wy+2
+      for r=0,1 do for cc=0,1 do draw.RectFilled(mgx+cc*4,mgy+r*4,1.6,1.6,a(theme.faint,0.9*apm),0) end end
+    end
+    -- wordmark followed by the menu's accent diamond
+    tmid(wx+14,wy,ph,"Ego", a(theme.text,1), 14)
+    local dx,dy=wx+14+lw+9,wy+ph*0.5
+    pcall(draw.PolyFilled, {{dx,dy-4},{dx+4,dy},{dx,dy+4},{dx-4,dy}}, a(theme.accent,1))
+    -- hairline divider, then the live counters
+    local gx=wx+14+lw+21
+    draw.Line(gx,wy+8,gx,wy+ph-8, a(theme.line,0.6*apm), 1)
+    local tx=gx+11
+    local fc = fps>=100 and theme.ok or (fps>=45 and theme.text or theme.bad)
+    tmid(tx,wy,ph,ft, a(fc,1), 11)
+    tmid(tx+fw+9,wy,ph,ut, a(theme.faint,1), 11)
+  end
+
+  -- -------------------------------------------------------- keybind list
+  if apk>0.01 then
+    local rows={}
+    local function add(id,lb,en) if en and (bind[id] or 0)~=0 then rows[#rows+1]={lb,vkname(bind[id])} end end
+    add("aim_key","Aimbot",cfg.aim_on)
+    add("aim_toggle","Aim Toggle",cfg.aim_on)
+    add("silent_key","Silent",cfg.silent_on)
+    add("silent_toggle","Silent Toggle",cfg.silent_on)
+    add("esp_toggle","ESP Toggle",cfg.esp_on)
+    add("menu_key","Menu",true)
+    if #rows>0 then
+      local rh=21; local pw=168; local ph=40+#rows*rh
+      local kx=hud_keys_pos.x; local ky=hud_keys_pos.y
+      local grab=ui.open
+      if grab and inside(kx,ky,pw,ph) and ui.m.click and not ui.drag then
+        ui.drag={k="hud_keys",ox=ui.m.x-kx,oy=ui.m.y-ky}; ui.m.click=false
+      end
+      hud_panel(kx,ky,pw,ph,apk,4)
+      hud_head(kx+13,ky+11,pw-26-(grab and 13 or 0),"01","Keybinds")
+      -- drag grip, shown only when the menu can actually pick the panel up
+      if grab then
+        local gx=kx+pw-16; local gy=ky+14
+        for r=0,1 do for c=0,1 do
+          draw.RectFilled(gx+c*4, gy+r*4, 1.6,1.6, a(theme.faint,0.9*apk), 0)
+        end end
+      end
+      for i,r in ipairs(rows) do
+        local ry=ky+32+(i-1)*rh
+        if i%2==0 then draw.RectFilled(kx+9,ry,pw-18,rh, {1,1,1,0.022*apk}, 0) end
+        tmid(kx+14,ry,rh,r[1], a(theme.sub,1), 11)
+        -- the key sits in a field so it reads as a chip instead of loose text
+        local kw=ts(r[2],10); local cw=kw+13; local ch=15
+        local cx=kx+pw-13-cw; local cy=ry+(rh-ch)*0.5
+        draw.RectFilled(cx,cy,cw,ch, a(theme.field,1), 2)
+        draw.Rect(cx,cy,cw,ch, a(theme.line,1), 2, 1)
+        tmid(cx,cy,ch,r[2], a(theme.text,1), 10)
+      end
+    end
+  end
+
+  -- -------------------------------------------------------- feature bar
+  if apb>0.01 then
+    local feats={}
+    local function addf(id,lb) if cfg[id] then feats[#feats+1]=lb end end
+    addf("aim_on","AIM"); addf("silent_on","SILENT"); addf("esp_on","ESP")
+    addf("obj_on","OBJ"); addf("rad_on","RADAR")
+    if #feats>0 then
+      local pw=48; local gap=7; local pad=16
+      local tot=#feats*pw+(#feats-1)*gap+pad*2
+      local ph=34; local bp=hud_pos.bar
+      local bx=bp and bp.x or (sw*0.5-tot*0.5); local by=bp and bp.y or (sh-ph-18)
+      if bx+tot>sw then bx=sw-tot end; if bx<0 then bx=0 end
+      if by+ph>sh then by=sh-ph end
+      if ui.open and inside(bx,by,tot,ph) and ui.m.click and not ui.drag then
+        hud_pos.bar={x=bx,y=by}
+        ui.drag={k="hud_bar",ox=ui.m.x-bx,oy=ui.m.y-by}; ui.m.click=false
+      end
+      hud_panel(bx,by,tot,ph,apb,4)
+      if ui.open then
+        local bgx,bgy=bx+tot-14,by+2
+        for r=0,1 do for cc=0,1 do draw.RectFilled(bgx+cc*4,bgy+r*4,1.6,1.6,a(theme.faint,0.9*apb),0) end end
+      end
+      local e=mix(theme.accent,theme.accent2,0.5)
+      draw.RectFilled(bx+pad-2,by+ph-2,tot-(pad-2)*2,2, {e[1],e[2],e[3],0.9*apb}, 1)
+      for i,lb in ipairs(feats) do
+        local px=bx+pad+(i-1)*(pw+gap)
+        draw.CircleFilled(px+pw*0.5, by+11, 2.4, a(e,0.95*apb), 12)
+        local tw=ts(lb,10)
+        draw.Text(px+pw*0.5-tw*0.5, by+17, lb, a(theme.text,0.95*apb), 10)
+        if i<#feats then
+          local sx=px+pw+gap*0.5
+          draw.Line(sx,by+9,sx,by+ph-10, a(theme.line,0.5*apb), 1)
+        end
+      end
+    end
+  end
+end
+
+local SILENT_BONE={"head","torso","hip1","arm1","leg1","head"}
+local silent_hook=false
+local silent_track=nil
+local silent_bone_lock=nil
+local silent_target=nil
+local SILENT_VK=0x01
+
+local function rfn(pascal,snake) return raycast[pascal] or raycast[snake] end
+local R_enable  = rfn("EnableSilentHook","enable_silent_hook")
+local R_active  = rfn("IsSilentHookActive","is_silent_hook_active")
+local R_set     = rfn("SetSilentTarget","set_silent_target")
+local R_track   = rfn("TrackSilentTarget","track_silent_target")
+local R_clear   = rfn("ClearSilentTarget","clear_silent_target")
+local R_stop    = rfn("StopSilentTracking","stop_silent_tracking")
+local R_disable = rfn("DisableSilentHook","disable_silent_hook")
+
+local function silent_release()
+  if R_stop then pcall(R_stop) end
+  if R_clear then pcall(R_clear) end
+end
+
+local function silent_send(origin, dir)
+  if silent_track==nil then silent_track = type(R_track)=="function" end
+  if silent_track then
+    return (pcall(function() R_track(origin, dir, SILENT_VK) end))
+  end
+  if R_set then return (pcall(function() R_set(origin, dir) end)) end
+  return false
+end
+
+local function silent_enable()
+  local active=false
+  pcall(function() if R_active then active=R_active()==true end end)
+  if active then silent_hook=true; return true end
+  local ok=false; pcall(function() if R_enable then ok=R_enable() end end)
+  silent_hook = ok==true
+  return silent_hook
+end
+local function run_silent()
+  if not cfg.silent_on then
+    if silent_hook then silent_release(); if R_disable then pcall(R_disable) end; silent_hook=false end
+    silent_bone_lock=nil; silent_target=nil
+    return
+  end
+  if not silent_hook and not silent_enable() then return end
+  local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5
+
+  if cfg.silent_vis then fov_draw(cfg.silent_fovstyle,cfg.silent_fov,cx,cy,cfg.silent_fovchroma and chroma() or col.c_silent,0.7) end
+  -- like the camera line: select a target every frame so the line is a live
+  -- readout. only the shot override is gated on the key.
+  local firing=cfg.silent_always or ekey(bind.silent_key or 0x02)
+  local origin = shoot_origin()
+  if not origin then silent_release(); return end
+  -- candidate per player, mirroring the camera aimbot: Closest picks whichever
+  -- of head/torso/hip1 projects nearest the crosshair, and sticks to that bone
+  -- once chosen so the aim point cannot jitter between body parts.
+  local function cand_for(p)
+    if cfg.silent_team and p.friend then return nil end
+    if cfg.silent_bone==6 then
+      -- same hysteresis as the camera aimbot's Closest, and for the same reason:
+      -- a hard bone lock turns "closest to crosshair" into "closest when the
+      -- target was acquired". TUNE.bone_switch px of stickiness instead of a lock.
+      local order={"head","torso","hip1","arm1","arm2","leg1","leg2"}
+      local c,md=nil,1e9
+      local locked=silent_bone_lock
+      if locked and (p.name or p.key)~=silent_target then locked=nil end
+      for _,bn in ipairs(order) do
+        local b=aim_src(p,bn)
+        if b then
+          local sx,sy,v=W2S(b.x,b.y,b.z)
+          if v then
+            local d2=(sx-cx)*(sx-cx)+(sy-cy)*(sy-cy)
+            local eff=(bn==locked) and math.sqrt(d2)-TUNE.bone_switch or math.sqrt(d2)
+            if eff<md then md=eff; c={sx=sx,sy=sy,b=b,p=p,bn=bn,d=math.sqrt(d2)} end
+          end
+        end
+      end
+      return c
+    end
+    -- "Arms"/"Legs" re-pick the nearer limb every frame, with the same hysteresis
+    -- the Closest option uses so the point does not flick between the two limbs.
+    if cfg.silent_bone==4 or cfg.silent_bone==5 then
+      local order=(cfg.silent_bone==4) and {"arm1","arm2"} or {"leg1","leg2"}
+      local c,md=nil,1e9
+      local locked=silent_bone_lock
+      if locked and (p.name or p.key)~=silent_target then locked=nil end
+      for _,bn in ipairs(order) do
+        local b=aim_src(p,bn)
+        if b then
+          local sx,sy,v=W2S(b.x,b.y,b.z)
+          if v then
+            local d2=(sx-cx)*(sx-cx)+(sy-cy)*(sy-cy)
+            local eff=(bn==locked) and math.sqrt(d2)-TUNE.bone_switch or math.sqrt(d2)
+            if eff<md then md=eff; c={sx=sx,sy=sy,b=b,p=p,bn=bn,d=math.sqrt(d2)} end
+          end
+        end
+      end
+      return c
+    end
+    local bn=SILENT_BONE[cfg.silent_bone] or "head"
+    local b=aim_src(p,bn) or aim_src(p,"head") or aim_src(p,"torso")
+    if b then
+      local sx,sy,v=W2S(b.x,b.y,b.z)
+      if v then return {sx=sx,sy=sy,b=b,p=p,bn=bn,d=math.sqrt((sx-cx)*(sx-cx)+(sy-cy)*(sy-cy))} end
+    end
+    return nil
+  end
+  local function score(c)
+    local m=cfg.silent_priority or 1
+    if m==2 then return cam_dist(c.b.x,c.b.y,c.b.z)
+    elseif m==3 then return (c.p.hp or 100)*1e4 + c.d
+    else return c.d end
+  end
+  local best,bestv,bsx,bsy=nil,nil,nil,nil
+  local bs=1e18
+  -- same two-pool split, and the same strict FOV rule, as the camera aimbot: see
+  -- fov_head_ok there for why the override re-tests the head rather than
+  -- trusting the pool gate. box-style FOV is a square, so a corner point is
+  -- visually outside the circle while still testing inside.
+  local function fov_head_ok(p,style,f,cx2,cy2)
+    local hb=p.bones.head or p.bones.torso
+    if not hb then return false end
+    local sx,sy,v=W2S(hb.x,hb.y,hb.z)
+    if not v then return false end
+    return fov_inside(style,f,sx,sy,cx2,cy2)
+  end
+
+  -- wall check, same contract as the camera aimbot: skipped until the visibility
+  -- cache reports ready, cast to the exact bone the shot would be aimed at.
+  local wall_ready=false
+  if cfg.silent_wall then
+    if raycast and raycast.IsReady then pcall(function() wall_ready=raycast.IsReady() end) end
+  end
+  local function seen(c)
+    if not cfg.silent_wall or not wall_ready then return true end
+    local cam=frame_cam()
+    if not cam then return true end
+    local ok,vis=pcall(raycast.IsVisible,cam.X,cam.Y,cam.Z,c.b.x,c.b.y,c.b.z)
+    return not (ok and vis==false)
+  end
+  for _,p in ipairs(vm_players) do
+    local c=cand_for(p)
+    if c and fov_inside(cfg.silent_fovstyle,cfg.silent_fov,c.sx,c.sy,cx,cy) then local s=score(c); if s<bs and seen(c) then bs=s; best=c end end
+  end
+  if cfg.silent_drone then
+    local gb,gs=nil,1e18
+    for _,d in ipairs(gadget_cache) do
+      local sx,sy,v=W2S(d.x,d.y,d.z)
+      if v then
+        local dd=math.sqrt((sx-cx)^2+(sy-cy)^2)
+        if fov_inside(cfg.silent_fovstyle,cfg.silent_fov,sx,sy,cx,cy) then
+          local c={sx=sx,sy=sy,b=d,p={name=d.lb,key=d.lb,hp=100},bn="gadget",d=dd}
+          local s=score(c); if s<gs and seen(c) then gs=s; gb=c end
+        end
+      end
+    end
+    if gb then
+      local use=not best
+      if not use and cfg.silent_playerover then use=not fov_head_ok(best.p,cfg.silent_fovstyle,cfg.silent_fov,cx,cy) end
+      if use then best=gb end
+    end
+  end
+  if not best then silent_release(); return end
+  local prev_target=silent_target
+  silent_target=best.p.name or best.p.key
+  -- swap drops the Closest-bone lock so the new player gets its own bone
+  if prev_target~=silent_target then silent_bone_lock=nil end
+  if (cfg.silent_bone==6 or cfg.silent_bone==4 or cfg.silent_bone==5) and best.bn~="gadget" then silent_bone_lock=best.bn end
+  bestv=Vector3.New(best.b.x,best.b.y,best.b.z)
+  local sx,sy=nil,nil
+  if cfg.silent_tline then
+    local px,py,v=W2S(best.b.x,best.b.y,best.b.z)
+    if v then sx,sy=px,py end
+  end
+  bsx,bsy=sx,sy
+  -- target line. visible whenever a target is acquired, key held or not - the
+  -- toggle is a pure visibility control, it is not tied to firing. plain line
+  -- from the crosshair to the target, no endpoint marker, own color.
+  if cfg.silent_tline and bsx then
+    draw.Line(cx,cy,bsx,bsy, a(col.c_silent,1), 1)
+  end
+  if not firing then silent_release(); return end
+  if cfg.silent_magic then
+    local cam=camera.GetPosition()
+    if cam then
+      local ok2,no=pcall(function()
+        local back=cam-bestv; local m=back.Magnitude
+        if m and m>0.001 then back=back*(2/m) else back=Vector3.New(0,2,0) end
+        return bestv+back
+      end)
+      if ok2 and no then origin=no end
+    end
+  end
+  local ok,dir=pcall(function() return bestv-origin end)
+  if not ok or not dir then silent_release(); return end
+
+  local mag; pcall(function() mag=dir.Magnitude end)
+  if not mag or mag<0.05 then silent_release(); return end
+  if not silent_send(origin, dir) then silent_release(); return end
+end
+
+-- triggerbot.
+--
+-- fires through utility.MouseClick, which is an OS-level click aimed at the
+-- foreground window - the same injection path the aimbot uses for the mouse
+-- move, so it works on a game that ignores synthetic input events.
+--
+-- gated on a pixel radius around the crosshair rather than on "is a target in
+-- the aim FOV": point blank at someone while looking past them must not fire.
+-- the hit point is picked from the real rig bones (aim_src), so "Any" means
+-- "bone closest to the crosshair", not "closest bone by distance".
+--
+-- outside the game window the click would land in whatever is focused, and
+-- clicking through the open menu would fire the gun instead of pressing a
+-- widget, so both are refused.
+local trig_next=0
+-- reaction delay state. trig_hold is the identity of the target currently under
+-- the crosshair and trig_dwell how long it has been there, in seconds. while the
+-- identity changes - a flick, a different bone on another player, a fresh target
+-- - the dwell restarts, which is what stops the first frame on someone from
+-- firing instantly.
+local trig_hold=nil
+local trig_dwell=0
+-- once a target has been held past the reaction delay it is "latched": the
+-- reaction gate is a one-time entry cost, not a per-shot one. otherwise every
+-- frame the target identity jitters (a bone swap, a gadget rebuilt each frame)
+-- reset the dwell and re-imposed the full reaction delay on top of the click
+-- delay, which is exactly the "reaction time also slows my click delay" the
+-- user saw. the latch clears only when the crosshair is on nobody at all.
+local trig_latch=false
+-- how long the crosshair may sit on nobody before the reaction latch drops.
+-- bridges the single frame dropouts that happen at a tight radius.
+local trig_miss=0
+local TRIG_GRACE=0.25
+local function run_trigger()
+  if not cfg.trig_on then trig_hold=nil; trig_dwell=0; trig_latch=false; trig_miss=0; return end
+  -- cooldown runs off the frame delta instead of utility.GetTime. GetTime's
+  -- resolution is not documented, and a whole-second clock made every delay
+  -- setting behave the same (the gate was either always open or always shut for
+  -- the rest of that second). _dt is already in seconds and is clamped by the
+  -- engine, so the slider means exactly what it says at any framerate.
+  if trig_next>0 then
+    trig_next=trig_next-_dt
+    if trig_next<0 then trig_next=0 end
+  end
+  if ui.open and inside(ui.x,ui.y,ui.w,ui.h) then trig_hold=nil; trig_dwell=0; trig_latch=false; trig_miss=0; return end
+  if not cfg.trig_always then
+    local hk=bind.trig_key or 0
+    if hk==0 or not ekey(hk) then trig_hold=nil; trig_dwell=0; trig_latch=false; trig_miss=0; return end
+  end
+  local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5
+  local rad=cfg.trig_fov or 6
+  local bd=rad*rad
+  local best=nil
+  local mode=cfg.trig_bone or 6
+  for _,p in ipairs(vm_players) do
+    if not (cfg.trig_team and p.friend) then
+      if mode==6 then
+        for _,bn in ipairs({"head","torso","hip1","arm1","arm2","leg1","leg2"}) do
+          local b=aim_src(p,bn)
+          if b then
+            local sx,sy,v=W2S(b.x,b.y,b.z)
+            if v then
+              local d2=(sx-cx)*(sx-cx)+(sy-cy)*(sy-cy)
+              if d2<=bd then bd=d2; best={b=b,p=p} end
+            end
+          end
+        end
+      elseif mode==4 or mode==5 then
+        -- Arms / Legs: whichever limb on that pair the crosshair is nearer,
+        -- re-picked every frame.
+        for _,bn in ipairs((mode==4) and {"arm1","arm2"} or {"leg1","leg2"}) do
+          local b=aim_src(p,bn)
+          if b then
+            local sx,sy,v=W2S(b.x,b.y,b.z)
+            if v then
+              local d2=(sx-cx)*(sx-cx)+(sy-cy)*(sy-cy)
+              if d2<=bd then bd=d2; best={b=b,p=p} end
+            end
+          end
+        end
+      else
+        local b=aim_src(p,AIM_BONE[mode] or "head")
+        if b then
+          local sx,sy,v=W2S(b.x,b.y,b.z)
+          if v then
+            local d2=(sx-cx)*(sx-cx)+(sy-cy)*(sy-cy)
+            if d2<=bd then bd=d2; best={b=b,p=p} end
+          end
+        end
+      end
+    end
+  end
+  if cfg.trig_drone then
+    for _,d in ipairs(gadget_cache) do
+      local sx,sy,v=W2S(d.x,d.y,d.z)
+      if v then
+        local d2=(sx-cx)*(sx-cx)+(sy-cy)*(sy-cy)
+        if d2<=bd then bd=d2; best={b=d,g=d.lb} end
+      end
+    end
+  end
+  -- reaction delay. this is the time the trigger must be held on a target
+  -- BEFORE the first shot - it is not a per-shot gate. once a target has been
+  -- held past cfg.trig_react the latch stays set and every later shot is spaced
+  -- purely by the click delay, so a held trigger fires full-auto instead of
+  -- tapping.
+  --
+  -- two things used to break that and cause tap fire:
+  --   * identity was the viewmodel record, which is rebuilt when the bone under
+  --     the crosshair changes - a "Closest"/"Any" hitbox flips that constantly,
+  --     so the dwell clock restarted before it ever reached the delay. keying on
+  --     the player ADDRESS instead is stable while you are on the same body.
+  --   * the latch cleared the instant best went nil for a single frame, which at
+  --     a small radius happens all the time. it now survives a short dropout
+  --     (TRIG_GRACE below) so micro-misses do not re-arm the reaction delay.
+  local tid = best and (best.g or (best.p and best.p.ent) or best.p) or nil
+  if tid~=nil and tid==trig_hold then
+    trig_dwell=trig_dwell+_dt
+    trig_miss=0
+  elseif tid~=nil then
+    trig_hold=tid; trig_dwell=0; trig_miss=0
+  else
+    -- no target this frame: keep the latch briefly, then drop it.
+    trig_miss=trig_miss+_dt
+    if trig_miss>TRIG_GRACE then trig_hold=nil; trig_dwell=0; trig_latch=false end
+  end
+  if tid~=nil and trig_dwell>=(cfg.trig_react or 0)/1000 then trig_latch=true end
+  local ready=best~=nil and trig_latch
+  if cfg.trig_show then
+    local q=a(col.c_trig,0.55)
+    local pts=fov_circle_pts(cx,cy,rad)
+    if draw.PolyClosed then pcall(draw.PolyClosed,pts,q,1) else pcall(draw.Circle,cx,cy,rad,q,40,1) end
+    if best then
+      local sx,sy,v=W2S(best.b.x,best.b.y,best.b.z)
+      if v then pcall(draw.RectFilled,sx-2,sy-2,4,4,a(col.c_trig,ready and 0.9 or 0.3),2) end
+    end
+  end
+  if not ready then return end
+  if trig_next>0 then return end
+  if cfg.trig_wall then
+    local cam=frame_cam()
+    if cam then
+      local ok,vis=pcall(raycast.IsVisible,cam.X,cam.Y,cam.Z,best.b.x,best.b.y,best.b.z)
+      if ok and vis==false then return end
+    end
+  end
+  trig_next=(cfg.trig_delay or 50)/1000
+  pcall(utility.MouseClick,"left")
+end
+
+getgenv=getgenv or function() return _G end
+
+-- ===== config =====
+-- vector exposes no config api, but it ships the io standard library, so the
+-- profile is written to disk with io.open/io.write. a copy is kept in getgenv
+-- as a fallback for sandboxes where file io is blocked. json is used when
+-- HttpService is reachable, otherwise a plain key=value text format.
+local function cfg_env()
+  local g=getgenv()
+  if type(g)~="table" then return nil end
+  if type(g.EGO_CFGS)~="table" then g.EGO_CFGS={} end
+  return g
+end
+local function cfg_http()
+  local ok,hs=pcall(function() return game.GetService("HttpService") end)
+  if ok and hs then return hs end
+  return nil
+end
+local cfg_last_save=0
+local function cfg_save(slot,quiet)
+  slot=tonumber(slot) or tonumber(cfg.cfg_slot) or 1
+  local data=nil
+  local hs=cfg_http()
+  if hs then
+    local t={v={},b={},c={}}
+    for k,v in pairs(cfg) do if k~="cfg_slot" then t.v[k]=v end end
+    for k,v in pairs(bind) do t.b[k]=v end
+    for k,cv in pairs(col) do t.c[k]={cv[1] or 0,cv[2] or 0,cv[3] or 0,cv[4] or 1} end
+    local ok,s=pcall(function() return hs:JSONEncode(t) end)
+    if ok and type(s)=="string" and #s>0 then data=s end
+  end
+  if not data then
+    local o={"#ego-config-v1"}
+    for k,v in pairs(cfg) do
+      if k~="cfg_slot" then o[#o+1]="v "..k.."="..(type(v)=="boolean" and (v and "1" or "0") or tostring(v)) end
+    end
+    for k,v in pairs(bind) do o[#o+1]="b "..k.."="..tostring(v) end
+    for k,cv in pairs(col) do o[#o+1]="c "..k.."="..(cv[1] or 0)..","..(cv[2] or 0)..","..(cv[3] or 0)..","..(cv[4] or 1) end
+    data=table.concat(o,"\n")
+  end
+  local g=cfg_env()
+  if g then g.EGO_CFGS[slot]=data; g.EGO_SLOT=slot end
+  local disk=false
+  local ok,f=pcall(function() return io.open("ego_config_"..slot..".cfg","w") end)
+  if ok and f then
+    local wok=pcall(function() f:write(data) end)
+    pcall(function() f:close() end)
+    disk=wok
+  end
+  cfg_dirty=false
+  cfg_last_save=utility.GetTime and utility.GetTime() or 0
+  if not quiet then
+    if disk then pcall(function() notify.Success("Config saved","slot "..slot.." - ego_config_"..slot..".cfg",3) end)
+    else pcall(function() notify.Warning("Config saved to session","io.open is blocked, no file written",4) end) end
+  end
+  return disk
+end
+cfg_load=function(slot,quiet)
+  slot=tonumber(slot) or tonumber(cfg.cfg_slot) or 1
+  local g=cfg_env()
+  local data=nil
+  local ok,f=pcall(function() return io.open("ego_config_"..slot..".cfg","r") end)
+  if ok and f then
+    local rok,s=pcall(function() return f:read("*a") end)
+    pcall(function() f:close() end)
+    if rok and type(s)=="string" and #s>0 then data=s end
+  end
+  if not data and g and type(g.EGO_CFGS)=="table" then data=g.EGO_CFGS[slot] end
+  if not data then
+    if not quiet then pcall(function() notify.Warning("Nothing to load","slot "..slot.." is empty",3) end) end
+    return false
+  end
+  local applied=false
+  if data:sub(1,1)=="{" then
+    local hs=cfg_http()
+    if hs then
+      local jok,t=pcall(function() return hs:JSONDecode(data) end)
+      if jok and type(t)=="table" then
+        for k,v in pairs(t.v or {}) do
+          if cfg[k]~=nil then
+            if type(v)=="boolean" then cfg[k]=v
+            else local x=tonumber(v); if x then cfg[k]=x end end
+          end
+        end
+        for k,v in pairs(t.b or {}) do
+          if bind[k]~=nil then local x=tonumber(v); if x then bind[k]=x end end
+        end
+        for k,v in pairs(t.c or {}) do
+          if col[k]~=nil and type(v)=="table" then
+            local r1,g1,b1=tonumber(v[1]),tonumber(v[2]),tonumber(v[3])
+            if r1 and g1 and b1 then col[k]={r1,g1,b1,tonumber(v[4]) or 1} end
+          end
+        end
+        applied=true
+      end
+    end
+  else
+    for line in data:gmatch("[^\n]+") do
+      local kind,k,val=line:match("^(%a) ([^=]+)=(.*)$")
+      if kind then
+        if kind=="v" and cfg[k]~=nil then
+          if type(cfg[k])=="boolean" then cfg[k]=(val=="1" or val=="true")
+          else local x=tonumber(val); if x then cfg[k]=x end end
+        elseif kind=="b" and bind[k]~=nil then
+          local x=tonumber(val); if x then bind[k]=x end
+        elseif kind=="c" and col[k]~=nil then
+          local r,g,b,a=val:match("([%d%.%-]+),([%d%.%-]+),([%d%.%-]+),([%d%.%-]+)")
+          if r then col[k]={tonumber(r),tonumber(g),tonumber(b),tonumber(a) or 1} end
+        end
+      end
+    end
+    applied=true
+  end
+  if g then g.EGO_SLOT=slot end
+  cfg_dirty=false
+  if not quiet then
+    if applied then pcall(function() notify.Success("Config loaded","slot "..slot,3) end)
+    else pcall(function() notify.Error("Config is corrupted","slot "..slot.." could not be parsed",3) end) end
+  end
+  return applied
+end
+local function cfg_reset()
+  -- re-apply the schema defaults, same loop the menu uses to seed the values
+  for _,tab in ipairs(SCHEMA) do for _,g in ipairs(tab.groups) do for _,it in ipairs(g.items) do
+    if it.t=="toggle" then cfg[it.id]=it.default or false
+    elseif it.t=="slider" then cfg[it.id]=it.default or it.min
+    elseif it.t=="combo" then cfg[it.id]=it.default or 1
+    elseif it.t=="bind" then bind[it.id]=it.default or 0
+    elseif it.t=="color" then col[it.id]={DEF_COL[it.id][1],DEF_COL[it.id][2],DEF_COL[it.id][3],DEF_COL[it.id][4]} end
+  end end end
+  cfg_dirty=true
+  pcall(function() notify.Success("Defaults restored","",3) end)
+end
+
+getgenv().EGO_ID=(getgenv().EGO_ID or 0)+1
+local MY_ID=getgenv().EGO_ID
+local unloaded=false
+for _,tab in ipairs(SCHEMA) do for _,g in ipairs(tab.groups) do for _,it in ipairs(g.items) do
+  if it.id=="unload" then it._cb=function() cfg_save(cfg.cfg_slot,true); unloaded=true
+    silent_release(); if R_disable then pcall(R_disable) end
+    pcall(function() notify.Success("Ego","Unloaded",2) end) end
+  elseif it.id=="cfg_save" then it._cb=function() cfg_save() end
+  elseif it.id=="cfg_load" then it._cb=function() cfg_load() end
+  elseif it.id=="cfg_reset" then it._cb=function() cfg_reset() end
+  end
+end end end
+
+-- restore the last profile on start so the menu comes up the way it was left
+cfg_env()
+cfg.cfg_slot=tonumber(cfg_env().EGO_SLOT) or tonumber(cfg.cfg_slot) or 1
+cfg_load(cfg.cfg_slot,true)
+
+function OnFrame()
+  if unloaded or getgenv().EGO_ID~=MY_ID then return end
+  AC.frame=AC.frame+1
+  _dt=utility.GetDeltaTime and utility.GetDeltaTime() or 0.016
+  if not _dt or _dt<=0 or _dt>0.2 then _dt=0.016 end
+  TUNE.cam=nil
+  if cfg.accent_chroma then
+    local h=now()*0.15
+    theme.accent=hsv(h,0.7,1)
+    theme.accent2=hsv(h+0.11,0.7,1)
+  else
+    theme.accent=col.c_accent or theme.accent
+    theme.accent2=theme.accent2_base
+  end
+  update_input()
+  pcall(scan_vm)
+  pcall(scan_gadgets)
+  pcall(run_aimbot)
+  pcall(run_silent)
+  pcall(run_trigger)
+  pcall(run_esp)
+  pcall(run_obj_esp)
+  pcall(ND.run_nades)
+  pcall(run_radar)
+  pcall(run_alert)
+  pcall(run_crosshair)
+  pcall(run_hud)
+  ui.appear=approach("appear", ui.open and 1 or 0, 14)
+  if ui.appear>0.01 then pcall(draw_menu) end
+  theme.opacity=1
+  -- debounced autosave: any widget that touches a setting flags the profile
+  -- dirty and it is written out at most once a second.
+  if cfg_dirty and cfg.cfg_auto then
+    local now=utility.GetTime and utility.GetTime() or 0
+    if now-cfg_last_save>=1 then cfg_save(cfg.cfg_slot,true) end
+  end
+end
+
+pcall(function() notify.Success("Ego v1.0 loaded","Right Shift to toggle menu",5) end)
+
+ 
+
+
+
+
+
