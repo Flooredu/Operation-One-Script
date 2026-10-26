@@ -684,6 +684,8 @@ local function draw_menu()
   local dx,dy=x+PAD+lw+11, y+19
   if draw.PolyFilled then pcall(draw.PolyFilled, {{dx,dy-4},{dx+4,dy},{dx,dy+4},{dx-4,dy}}, a(theme.accent,1))
   else draw.RectFilled(dx-3,dy-3,6,6, a(theme.accent,1), 1) end
+  -- product line, sat just past the diamond so it reads as part of the lockup
+  tmid(dx+11, y, TOPBAR_H, "Operation One", a(theme.sub,1), 12)
   trt(x+w-PAD,y+12,16,"v1.0", a(theme.faint,1),10)
 
   -- vertical tab rail
@@ -3014,8 +3016,3 @@ end
 pcall(function() notify.Success("Ego v1.0 loaded","Right Shift to toggle menu",5) end)
 
  
-
-
-
-
-
