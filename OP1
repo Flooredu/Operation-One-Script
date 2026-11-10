@@ -60,7 +60,8 @@ local cfg_load
 
 local SCHEMA = {
 {name="Aimbot", groups={
-  {name="Camera Aimbot", col=1, items={
+  {name="Camera Aimbot", col=1, show=function() return cfg.aim_mode~=2 end, items={
+    {t="combo",id="aim_mode",label="Aimbot Type",items={"Aimbot","Silent Aim"},default=1},
     {t="toggle",id="aim_on",label="Enable Aimbot"},
     {t="bind",id="aim_toggle",label="Toggle Key",default=0x46},
     {t="bind",id="aim_key",label="Aim Key",default=0x02},
@@ -80,7 +81,8 @@ local SCHEMA = {
     {t="color",id="c_fov",label="FOV Color"},
     {t="toggle",id="aim_fovchroma",label="Chroma FOV",default=false},
   }},
-  {name="Silent Aim", col=2, items={
+  {name="Silent Aim", col=2, show=function() return cfg.aim_mode==2 end, items={
+    {t="combo",id="aim_mode",label="Aimbot Type",items={"Aimbot","Silent Aim"},default=1},
     {t="toggle",id="silent_on",label="Silent Aim"},
     {t="bind",id="silent_toggle",label="Toggle Key",default=0x48},
     {t="bind",id="silent_key",label="Silent Key",default=0x02},
@@ -98,23 +100,6 @@ local SCHEMA = {
     {t="toggle",id="silent_tline",label="Target Line",default=true},
     {t="color",id="c_silent",label="Line Color"},
     {t="toggle",id="silent_fovchroma",label="Chroma FOV",default=false},
-  }},
-}},
-{name="Trigger", groups={
-  {name="Triggerbot", col=1, items={
-      {t="toggle",id="trig_on",label="Enable Triggerbot"},
-      {t="bind",id="trig_toggle",label="Toggle Key",default=0x54},
-      {t="toggle",id="trig_always",label="Always On (no key)",default=true},
-      {t="bind",id="trig_key",label="Hold Key",default=0x02},
-      {t="slider",id="trig_fov",label="Crosshair Radius",min=2,max=80,default=6,suf="px"},
-      {t="combo",id="trig_bone",label="Hitbox",items={"Head","Chest","Pelvis","Arms","Legs","Any"},default=6},
-      {t="slider",id="trig_react",label="Reaction Delay",min=0,max=1000,default=100,suf="ms"},
-      {t="slider",id="trig_delay",label="Click Delay",min=0,max=400,default=50,suf="ms"},
-      {t="toggle",id="trig_wall",label="Wall Check",default=true},
-      {t="toggle",id="trig_team",label="Team Check",default=true},
-      {t="toggle",id="trig_drone",label="Target Utility",default=false},
-      {t="toggle",id="trig_show",label="Show Radius",default=true},
-      {t="color",id="c_trig",label="Radius Color"},
   }},
 }},
 {name="ESP", groups={
@@ -139,7 +124,6 @@ local SCHEMA = {
     {t="slider",id="esp_hat_size",label="Hat Size",min=40,max=220,default=100,suf="%"},
     {t="toggle",id="esp_tracer",label="Tracers"},
     {t="combo",id="esp_tracer_from",label="Tracer Origin",items={"Bottom","Center","Top"},default=1},
-    {t="toggle",id="esp_off",label="Off-screen Arrows"},
     {t="slider",id="esp_maxdist",label="Max Distance",min=0,max=3000,default=3000},
     {t="slider",id="esp_textsize",label="Text Size",min=9,max=18,default=12},
   }},
@@ -149,6 +133,14 @@ local SCHEMA = {
     {t="color",id="c_tracer",label="Tracer"},
     {t="color",id="c_hat",label="Hat"},
     {t="toggle",id="esp_chroma",label="Chroma Boxes"},
+  }},
+  {name="Radar", col=2, items={
+    {t="toggle",id="rad_on",label="Enable Radar"},
+    {t="slider",id="rad_size",label="Size",min=90,max=280,default=160},
+    {t="slider",id="rad_range",label="Range",min=10,max=500,default=180,suf="m"},
+    {t="slider",id="rad_x",label="X Pos",min=0,max=100,default=88,suf="%"},
+    {t="slider",id="rad_y",label="Y Pos",min=0,max=100,default=8,suf="%"},
+    {t="slider",id="rad_alpha",label="Opacity",min=20,max=100,default=80,suf="%"},
   }},
 }},
 {name="World", groups={
@@ -175,15 +167,6 @@ local SCHEMA = {
     {t="color",id="c_nade",label="Grenades"},
     {t="color",id="c_util",label="Utility"},
   }},
-  {name="Radar", col=3, items={
-    {t="toggle",id="rad_on",label="Enable Radar"},
-    {t="toggle",id="rad_team",label="Team Check",default=true},
-    {t="slider",id="rad_size",label="Size",min=90,max=280,default=160},
-    {t="slider",id="rad_range",label="Range",min=50,max=500,default=180,suf="st"},
-    {t="slider",id="rad_x",label="X Pos",min=0,max=100,default=88,suf="%"},
-    {t="slider",id="rad_y",label="Y Pos",min=0,max=100,default=8,suf="%"},
-    {t="slider",id="rad_alpha",label="Opacity",min=20,max=100,default=80,suf="%"},
-  }},
   {name="Flank Alert", col=2, items={
     {t="toggle",id="alert_on",label="Behind-You Alert"},
     {t="slider",id="alert_dist",label="Range",min=15,max=120,default=45,suf="st"},
@@ -191,16 +174,37 @@ local SCHEMA = {
     {t="note",label="and behind you."},
   }},
 }},
-{name="Misc", groups={
+{name="Triggerbot", groups={
+  {name="Triggerbot", col=1, items={
+      {t="toggle",id="trig_on",label="Enable Triggerbot"},
+      {t="bind",id="trig_toggle",label="Toggle Key",default=0x54},
+      {t="toggle",id="trig_always",label="Always On (no key)",default=true},
+      {t="bind",id="trig_key",label="Hold Key",default=0x02},
+      {t="slider",id="trig_fov",label="Crosshair Radius",min=2,max=80,default=6,suf="px"},
+      {t="combo",id="trig_bone",label="Hitbox",items={"Head","Chest","Pelvis","Arms","Legs","Any"},default=6},
+      {t="slider",id="trig_react",label="Reaction Delay",min=0,max=1000,default=100,suf="ms"},
+      {t="slider",id="trig_delay",label="Click Delay",min=0,max=400,default=50,suf="ms"},
+      {t="toggle",id="trig_wall",label="Wall Check",default=true},
+      {t="toggle",id="trig_team",label="Team Check",default=true},
+      {t="toggle",id="trig_drone",label="Target Utility",default=false},
+      {t="toggle",id="trig_show",label="Show Radius",default=true},
+      {t="color",id="c_trig",label="Radius Color"},
+  }},
+}},
+{name="Crosshair", groups={
   {name="Crosshair", col=1, items={
     {t="toggle",id="xh_on",label="Custom Crosshair"},
-    {t="combo",id="xh_style",label="Style",items={"Cross","Dot","Circle","T","Star of David"},default=1},
+    {t="combo",id="xh_style",label="Style",items={"Cross","Dot","Circle","T","Star of David","Hitler"},default=1},
     {t="slider",id="xh_size",label="Size",min=4,max=30,default=10},
     {t="slider",id="xh_gap",label="Gap",min=0,max=16,default=4},
     {t="slider",id="xh_thick",label="Thickness",min=1,max=5,default=2},
     {t="toggle",id="xh_dot",label="Center Dot"},
     {t="toggle",id="xh_spin",label="Spin"},
     {t="slider",id="xh_speed",label="Spin Speed",min=-360,max=360,default=90,suf=" deg/s"},
+    {t="toggle",id="xh_pulse",label="Pulse",default=false},
+    {t="slider",id="xh_pulse_speed",label="Pulse Speed",min=20,max=300,default=100,suf=" BPM"},
+    {t="toggle",id="xh_follow",label="Follow Target",default=false},
+    {t="toggle",id="xh_chroma",label="Chroma",default=false},
     {t="color",id="c_xh",label="Color"},
   }},
 }},
@@ -224,8 +228,8 @@ local SCHEMA = {
     {t="toggle",id="hud_mark",label="Watermark",default=true},
     {t="toggle",id="hud_keys",label="Keybind List",default=true},
     {t="toggle",id="hud_bar",label="Feature Bar",default=true},
-    {t="note",label="Drag HUD panels while the menu"},
-    {t="note",label="is open."},
+    {t="note",label="Drag HUD panels to move"},
+    {t="note",label="them; the spot is saved."},
     {t="button",id="unload",label="Unload Ego"},
   }},
 } },
@@ -247,15 +251,18 @@ for _,tab in ipairs(SCHEMA) do for _,g in ipairs(tab.groups) do for _,it in ipai
   elseif it.t=="color" then col[it.id]={DEF_COL[it.id][1],DEF_COL[it.id][2],DEF_COL[it.id][3],DEF_COL[it.id][4]} end
 end end end
 
+-- HUD panel positions. -1 means "use the anchored default" (top-right for the
+-- watermark, bottom-right for the keybinds, bottom-centre for the feature bar),
+-- so an untouched panel still follows the screen size. Once a panel is dragged
+-- its exact spot lands in the profile and is restored on load, like fust.
+cfg.hud_mark_x,cfg.hud_mark_y=-1,-1
+cfg.hud_keys_x,cfg.hud_keys_y=-1,-1
+cfg.hud_bar_x,cfg.hud_bar_y=-1,-1
+
 local ui={ open=true, x=140,y=90,w=600,h=460, tab=1,
-  drag=nil, capture=nil, capture_ok=false, picker=nil,
+  drag=nil, capture=nil, capture_ok=false, picker=nil, win_grab=nil,
   m={x=0,y=0,down=false,was=false,click=false}, menu_edge=false, tog_edge=false,
   tog_edge_s=false, tog_edge_e=false, appear=0 }
-local hud_keys_pos={x=12,y=100}
--- watermark and feature bar positions. nil means "use the anchored default"
--- (top-right / bottom-centre), so an untouched panel still follows the screen
--- size; the moment it is dragged its position is stored here and kept.
-local hud_pos={}
 
 local function ts(s,sz) local w,h=draw.GetTextSize(s,sz or 12); return w or 0, h or 12 end
 local function tmid(x,y,h,s,c,sz) sz=sz or 12; local _,th=ts(s,sz); draw.Text(x,y+(h-th)*0.5,s,c,sz) end
@@ -641,6 +648,7 @@ end
 
 local function draw_menu()
   local e=ease_out(ui.appear); if e<0.01 then return end
+  ui.win_grab=nil
   theme.opacity=(cfg.ui_opacity or 100)/100 * e
   local x,y,w=ui.x,ui.y,ui.w
 
@@ -651,10 +659,15 @@ local function draw_menu()
 
   local placed={}; local coly={0,0}
   for _,g in ipairs(SCHEMA[ui.tab].groups) do
-    local gh=30; for _,it in ipairs(g.items) do gh=gh+row_h(it) end
-    local c=(coly[1]<=coly[2]) and 1 or 2
-    placed[#placed+1]={g=g,c=c,oy=coly[c],h=gh}
-    coly[c]=coly[c]+gh+GUT
+    -- a group can opt out with show(): the Aimbot tab uses this to swap the
+    -- camera-aimbot and silent-aim panels under the Aimbot Type dropdown, so
+    -- only the active mode's settings occupy the page (and the layout).
+    if not g.show or g.show() then
+      local gh=30; for _,it in ipairs(g.items) do gh=gh+row_h(it) end
+      local c=(coly[1]<=coly[2]) and 1 or 2
+      placed[#placed+1]={g=g,c=c,oy=coly[c],h=gh}
+      coly[c]=coly[c]+gh+GUT
+    end
   end
   local contentH=math.max(coly[1],coly[2]); if contentH>0 then contentH=contentH-GUT end
   local sideH=6+#SCHEMA*26
@@ -708,7 +721,6 @@ local function draw_menu()
     end
     tmid(x+18,ty,24,label, a(mix(theme.faint,theme.text,math.max(act, hot and 0.5 or 0)),1),12)
   end
-  if inside(x,y,w,TOPBAR_H) and ui.m.click and not ui.drag and not ui.picker then ui.drag={k="win",ox=ui.m.x-x,oy=ui.m.y-y}; ui.m.click=false end
 
   -- flat sections: numbered index + small caps label + hairline rule
   local secn=0
@@ -725,6 +737,15 @@ local function draw_menu()
     local iy=gy+18
     for _,it in ipairs(g.items) do local f=WI[it.t]; if f then f(it,gx,iy,colw) end iy=iy+row_h(it) end
   end
+  -- Whole-window drag grab, deferred. Every widget above has had a chance to
+  -- claim the press (and clears ui.m.click or sets ui.drag when it does), so a
+  -- click still unclaimed anywhere inside the window is empty space - the
+  -- background, the gap between rows, a section header, a note - and grabs the
+  -- window. run_hud draws after this and its panels sit on top, so it takes the
+  -- grab only if no panel claimed the same press.
+  if ui.m.click and not ui.drag and not ui.picker and inside(x,y,w,h) then
+    ui.win_grab={ox=ui.m.x-x,oy=ui.m.y-y}
+  end
   picker_draw()
   SNOW.draw(x,y,w,h,theme.opacity)
 end
@@ -734,11 +755,15 @@ local function update_input()
   local d=ekey(0x01); ui.m.click=d and not ui.m.was; ui.m.down=d; ui.m.was=d
   if not d and ui.drag and ui.drag.k~="slider" then ui.drag=nil end
   if ui.drag and ui.drag.k=="win" then local sw,sh=scr(); ui.x=clamp(ui.m.x-ui.drag.ox,0,sw-ui.w); ui.y=clamp(ui.m.y-ui.drag.oy,0,sh-ui.h) end
-  if ui.drag and ui.drag.k=="hud_keys" then hud_keys_pos.x=ui.m.x-ui.drag.ox; hud_keys_pos.y=ui.m.y-ui.drag.oy end
-  if ui.drag and (ui.drag.k=="hud_mark" or ui.drag.k=="hud_bar") then
+  if ui.drag and (ui.drag.k=="hud_mark" or ui.drag.k=="hud_keys"
+    or ui.drag.k=="hud_bar") then
     local sw2,sh2=scr()
-    local k=ui.drag.k=="hud_mark" and "mark" or "bar"
-    hud_pos[k]={x=clamp(ui.m.x-ui.drag.ox,0,sw2-24),y=clamp(ui.m.y-ui.drag.oy,0,sh2-14)}
+    local key=ui.drag.k=="hud_mark" and "mark" or (ui.drag.k=="hud_keys" and "keys") or "bar"
+    -- straight into the profile keys, so the panels come back where they were
+    -- left after a reload and the debounced autosave persists the drag.
+    cfg["hud_"..key.."_x"]=clamp(ui.m.x-ui.drag.ox,0,sw2-24)
+    cfg["hud_"..key.."_y"]=clamp(ui.m.y-ui.drag.oy,0,sh2-14)
+    cfg_dirty=true
   end
   local mk=bind.menu_key or 0xA1; local held=ekey(mk)
   if held and not ui.menu_edge then ui.open=not ui.open; ui.picker=nil; ui.capture=nil end
@@ -749,14 +774,14 @@ local function update_input()
   -- key AND flip the aimbot in the same frame.
   local tk=bind.aim_toggle or 0
   local th=(tk~=0) and ekey(tk) or false
-  if th and not ui.tog_edge and not ui.capture then cfg.aim_on=not cfg.aim_on; cfg_dirty=true end
+  if cfg.aim_mode~=2 and th and not ui.tog_edge and not ui.capture then cfg.aim_on=not cfg.aim_on; cfg_dirty=true end
   ui.tog_edge=th
   -- silent aim and esp get the same edge triggered enable key. each toggle
   -- keeps its own edge flag, otherwise flipping one would leave the others
   -- latched and the next press would be swallowed.
   local sk=bind.silent_toggle or 0
   local sh=(sk~=0) and ekey(sk) or false
-  if sh and not ui.tog_edge_s and not ui.capture then cfg.silent_on=not cfg.silent_on; cfg_dirty=true end
+  if cfg.aim_mode==2 and sh and not ui.tog_edge_s and not ui.capture then cfg.silent_on=not cfg.silent_on; cfg_dirty=true end
   ui.tog_edge_s=sh
   local ek=bind.esp_toggle or 0
   local eh=(ek~=0) and ekey(ek) or false
@@ -1131,6 +1156,10 @@ local aim_bone_lock=nil
 local aim_dz_state=0
 local aim_rx=0
 local aim_ry=0
+-- Crosshair Follow Target state. The aim pass publishes the selected bone's
+-- screen point here and run_crosshair reads it when the toggle is on, so the
+-- crosshair can sit on the target without depending on the target line.
+local XH_R={tx=0,ty=0,tv=false,ph=0}
 
 -- Smoothing is a straight divisor on the screen-space error, the same shape
 -- Project Vector uses: move a 1/sm fraction of what is left, every frame.
@@ -1162,6 +1191,7 @@ local function aim_reset()
   aim_dz_state=0
   aim_rx=0
   aim_ry=0
+  XH_R.tv=false
 end
 
 -- prefer the real character bone over the viewmodel bone. viewmodels render
@@ -1258,7 +1288,7 @@ local function fov_draw(style,f,cx,cy,c,al)
 end
 
 local function run_aimbot()
-  if not cfg.aim_on then aim_reset(); return end
+  if cfg.aim_mode==2 or not cfg.aim_on then aim_reset(); return end
   local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5
   if cfg.aim_fovcircle then fov_draw(cfg.aim_fovstyle,cfg.aim_fov,cx,cy,cfg.aim_fovchroma and chroma() or col.c_fov,0.8) end
   -- the target line is a live readout, so target selection runs whether or not
@@ -1403,6 +1433,10 @@ local function run_aimbot()
   -- gets its own bone picked.
   if prev_target~=aim_target then aim_dz_state=0; aim_bone_lock=nil end
   if (cfg.aim_bone==6 or cfg.aim_bone==4 or cfg.aim_bone==5) and best.bn~="gadget" then aim_bone_lock=best.bn end
+  -- publish the selected bone's screen point for the crosshair's Follow Target
+  -- toggle. It shares the target line's endpoint but does not require the line
+  -- itself to be enabled.
+  XH_R.tx,XH_R.ty,XH_R.tv=best.sx,best.sy,true
   -- target line. visible whenever a target is acquired, key held or not - the
   -- toggle is a pure visibility control, it is not tied to firing. plain line
   -- from the crosshair to the target, no endpoint marker, own color.
@@ -1558,13 +1592,6 @@ local function run_esp()
             local x2,y2,v2=AC.proj(b2)
             if v1 and v2 then draw.Line(x1,y1,x2,y2,a(base,0.9*op),1) end
           end
-        end
-      end
-      if cfg.esp_off and not mnx and head then
-        local ang=offscreen_dir(head.x,head.y,head.z)
-        if ang then local r=math.min(sw,sh)*0.38; local axx=cx+math.cos(ang)*r; local ayy=cy+math.sin(ang)*r; local s2=9
-          local pts={{axx+math.cos(ang)*s2,ayy+math.sin(ang)*s2},{axx+math.cos(ang+2.5)*s2,ayy+math.sin(ang+2.5)*s2},{axx+math.cos(ang-2.5)*s2,ayy+math.sin(ang-2.5)*s2}}
-          if draw.PolyFilled then pcall(draw.PolyFilled, pts, a(base,0.9*op)) else draw.CircleFilled(axx,ayy,6,a(base,0.9*op),3) end
         end
       end
     end
@@ -2202,24 +2229,78 @@ local function xh_rot(cx,cy,ang)
     return cx+dx*co-dy*si, cy+dx*si+dy*co
   end
 end
+-- closed outline: PolyClosed when the draw table has it, hairline segments
+-- otherwise, so the Star of David and the hooked cross never disappear on a
+-- stripped build
+local function xh_poly(pts,c,th)
+  if draw.PolyClosed then pcall(draw.PolyClosed, pts, c, th); return end
+  for i=1,#pts do
+    local p=pts[i]; local q=pts[i%#pts+1]
+    draw.Line(p[1],p[2],q[1],q[2],c,th)
+  end
+end
 
 local function run_crosshair()
   if not cfg.xh_on then return end
-  local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5; local s=cfg.xh_size; local gp=cfg.xh_gap; local th=cfg.xh_thick; local c=a(col.c_xh,1); local st=cfg.xh_style
+  local sw,sh=scr(); local cx,cy=sw*0.5,sh*0.5
+  -- Follow Target parks the crosshair on the bone the aim pass picked, using
+  -- the same screen point as the target line. When the aimbot is off (or has
+  -- no target inside its FOV) it falls back to the on-screen bone nearest the
+  -- screen centre, so the toggle works on its own instead of doing nothing.
+  if cfg.xh_follow then
+    if cfg.aim_on and XH_R.tv then
+      cx,cy=XH_R.tx,XH_R.ty
+    else
+      local bd,bx,by=1e18,nil,nil
+      for _,p in ipairs(vm_players) do
+        if not (cfg.aim_team and p.friend) then
+          local b=p.bones.head or p.bones.torso
+          if b then
+            local sx,sy,v=W2S(b.x,b.y,b.z)
+            if v then
+              local d=(sx-sw*0.5)*(sx-sw*0.5)+(sy-sh*0.5)*(sy-sh*0.5)
+              if d<bd then bd=d; bx,by=sx,sy end
+            end
+          end
+        end
+      end
+      if bx then cx,cy=bx,by end
+    end
+  end
+  -- Pulse breathes the arms and the gap with a sine wave; thickness stays fixed
+  -- so the lines never shimmer. Speed is in beats per minute.
+  local pulse=1
+  if cfg.xh_pulse then
+    local ph=(XH_R.ph or 0)+(cfg.xh_pulse_speed or 100)/60*math.pi*2*_dt
+    ph=ph%(math.pi*2)
+    XH_R.ph=ph
+    pulse=1+0.35*math.sin(ph)
+  end
+  local s=(cfg.xh_size or 10)*pulse
+  local gp=(cfg.xh_gap or 4)*pulse
+  local th=cfg.xh_thick
+  local c=a(cfg.xh_chroma and hsv((now()*0.12)%1,0.8,1) or col.c_xh,1)
+  local st=cfg.xh_style
   if cfg.xh_spin then
     xh_ang=(xh_ang+(cfg.xh_speed or 0)*math.pi/180*_dt)%TAU
   end
   local ang=cfg.xh_spin and xh_ang or 0
   local R=xh_rot(cx,cy,ang)
   if st==1 then
+    -- four arms, each starting gp px out from the centre and running s px long
     local x1,y1=R(cx-gp-s,cy); local x2,y2=R(cx-gp,cy)
     local x3,y3=R(cx+gp,cy);   local x4,y4=R(cx+gp+s,cy)
     local x5,y5=R(cx,cy-gp-s); local x6,y6=R(cx,cy-gp)
     local x7,y7=R(cx,cy+gp);   local x8,y8=R(cx,cy+gp+s)
     draw.Line(x1,y1,x2,y2,c,th); draw.Line(x3,y3,x4,y4,c,th)
     draw.Line(x5,y5,x6,y6,c,th); draw.Line(x7,y7,x8,y8,c,th)
-  elseif st==2 then draw.CircleFilled(cx,cy,th+1,c,10)
-  elseif st==3 then draw.Circle(cx,cy,s,c,24,th)
+  elseif st==2 then
+    -- Dot is the one style where Size is a radius rather than an arm length,
+    -- so it has to feed the pip directly; thickness only biases the floor.
+    local r=math.max(0.9, s*0.32+th*0.5)
+    draw.CircleFilled(cx,cy,r,c,math.max(8,math.floor(r*3)))
+  elseif st==3 then
+    draw.Circle(cx,cy,s,c,24,th)
   elseif st==4 then
     local x1,y1=R(cx-gp-s,cy); local x2,y2=R(cx-gp,cy)
     local x3,y3=R(cx+gp,cy);   local x4,y4=R(cx+gp+s,cy)
@@ -2227,68 +2308,152 @@ local function run_crosshair()
     draw.Line(x1,y1,x2,y2,c,th); draw.Line(x3,y3,x4,y4,c,th)
     draw.Line(x5,y5,x6,y6,c,th)
   elseif st==5 then
-    -- two triangles at 60 degrees, sharing the same circumcircle. radius r is
-    -- sized off xh_size, and xh_gap pushes the whole star out from center.
+    -- two equilateral triangles sharing one circumcircle; gap pushes the whole
+    -- star out from the centre, size sets its radius
     local r=gp+s
     local h=r*math.sqrt(3)*0.5
-    local ux,uy=R(cx,cy-r);     local lx,ly=R(cx-h,cy+r*0.5); local rx2,ry2=R(cx+h,cy+r*0.5)
-    local dx,dy=R(cx,cy+r);     local l2x,l2y=R(cx-h,cy-r*0.5); local r2x,r2y=R(cx+h,cy-r*0.5)
-    pcall(draw.PolyClosed,{{ux,uy},{lx,ly},{rx2,ry2}},c,th)
-    pcall(draw.PolyClosed,{{dx,dy},{l2x,l2y},{r2x,r2y}},c,th)
+    local ux,uy=R(cx,cy-r)
+    local lx,ly=R(cx-h,cy+r*0.5); local rx2,ry2=R(cx+h,cy+r*0.5)
+    local dx,dy=R(cx,cy+r)
+    local l2x,l2y=R(cx-h,cy-r*0.5); local r2x,r2y=R(cx+h,cy-r*0.5)
+    xh_poly({{ux,uy},{lx,ly},{rx2,ry2}}, c, th)
+    xh_poly({{dx,dy},{l2x,l2y},{r2x,r2y}}, c, th)
+  elseif st==6 then
+    -- hooked cross: one continuous plus, with a perpendicular hook on each
+    -- endpoint turning clockwise. gap pushes the whole shape out, size sets
+    -- the arm length from the centre.
+    local r=gp+s
+    local ax1,ay1=R(cx-r,cy);  local ax2,ay2=R(cx+r,cy)
+    local ax3,ay3=R(cx,cy-r);  local ax4,ay4=R(cx,cy+r)
+    draw.Line(ax1,ay1,ax2,ay2,c,th); draw.Line(ax3,ay3,ax4,ay4,c,th)
+    local h1x,h1y=R(cx-r,cy-r)
+    local h2x,h2y=R(cx+r,cy-r)
+    local h3x,h3y=R(cx+r,cy+r)
+    local h4x,h4y=R(cx-r,cy+r)
+    draw.Line(ax1,ay1,h1x,h1y,c,th); draw.Line(ax3,ay3,h2x,h2y,c,th)
+    draw.Line(ax2,ay2,h3x,h3y,c,th); draw.Line(ax4,ay4,h4x,h4y,c,th)
   end
-  if cfg.xh_dot then draw.CircleFilled(cx,cy,th,c,8) end
+  -- centre pip: thickness sets the base, size nudges it so the slider still
+  -- reads even when only the dot is on
+  if cfg.xh_dot and st~=2 then draw.CircleFilled(cx,cy,math.max(0.9, th+s*0.07),c,10) end
+end
+
+-- Radar blip state, hoisted out of the per-player loop so no closure is
+-- allocated every frame. run_radar fills these, rad_one reads them.
+local rad_s={rc={1,1,1,1}, tc={1,1,1,1}, dtxt={}, dw={}, pmap={}}
+-- One blip. Kept as a top-level function rather than a closure inside the loop
+-- so a busy radar does not allocate one function per target per frame.
+local function rad_one(p,idx,R)
+  -- Show Teammates, the same flag the player ESP filters on, so the radar and
+  -- the ESP agree on who is who. A shown teammate is dimmed and drawn smaller.
+  local mate=p.friend
+  if mate and not cfg.esp_team then return end
+  local pos=p.bones.head or p.bones.torso
+  if not pos then return end
+  local ox,oy,oz=R.ox,R.oy,R.oz
+  local dx,dz=pos.x-ox,pos.z-oz
+  local dd=math.sqrt(dx*dx+dz*dz)
+  if dd>R.rng then return end
+  local px=R.cx+(dx*R.rtx+dz*R.rtz)*(R.rsz*0.5-8)/R.rng
+  local py=R.cy-(dx*R.fx+dz*R.fz)*(R.rsz*0.5-8)/R.rng
+  -- blips use the Player swatch; chroma only swaps the hue, radar Opacity
+  -- multiplies on top of the swatch alpha.
+  local c=col.c_enemy or {0.95,0.35,0.4,1}
+  if cfg.esp_chroma then c=chroma() end
+  local ca=(c[4] or 1)*R.al
+  if mate then ca=ca*0.5 end
+  -- facing tick: the target's own LookVector, run through the same
+  -- camera-relative rotation as the blip, so the stub points where the player
+  -- is actually facing. LookVector is a host read, so it is refreshed about ten
+  -- times a second per player and cached on the record (which is reused every
+  -- frame); a facing angle does not visibly change faster than that.
+  local lx,lz=0,0
+  local ep=R.pmap[p.name]
+  if ep then
+    local t=now()
+    if not p._lvnext or t>=p._lvnext then
+      p._lvnext=t+0.1
+      local lv
+      pcall(function() lv=ep.LookVector end)
+      if lv then p._lvx,p._lvz=lv.X or 0,lv.Z or 0 end
+    end
+    lx,lz=p._lvx or 0,p._lvz or 0
+  end
+  if lx~=0 or lz~=0 then
+    local ll=math.sqrt(lx*lx+lz*lz)
+    if ll>1e-6 then
+      local ex=(lx*R.rtx+lz*R.rtz)/ll
+      local ey=-(lx*R.fx+lz*R.fz)/ll
+      local r0=mate and 2.2 or 3
+      local tc=R.tc
+      tc[1]=c[1]; tc[2]=c[2]; tc[3]=c[3]; tc[4]=ca*0.85
+      draw.Line(px+ex*r0,py+ey*r0,px+ex*(r0+7),py+ey*(r0+7),tc,1)
+    end
+  end
+  local rc=R.rc
+  rc[1]=c[1]; rc[2]=c[2]; rc[3]=c[3]; rc[4]=ca
+  draw.CircleFilled(px,py,mate and 2.2 or 3,rc,10)
+  -- straight-line distance from the local player, in the game's metres, so it
+  -- matches the kill feed. The label sits right of the blip and flips left when
+  -- it would leave the panel, so a target on the edge still reads.
+  local ddx,ddz=pos.x-ox,pos.z-oz
+  local ddy=pos.y-oy
+  local dm=math.floor(math.sqrt(ddx*ddx+ddy*ddy+ddz*ddz))
+  local txt=R.dtxt[dm]
+  if not txt then txt=dm.."m"; R.dtxt[dm]=txt end
+  local tw=R.dw[dm]
+  if not tw then tw=ts(txt,9); R.dw[dm]=tw end
+  local tx2=px+11
+  if tx2+tw>R.rx+R.rsz-3 then tx2=px-11-tw end
+  draw.Text(tx2,py-5,txt,rc,9)
 end
 
 local function run_radar()
   if not cfg.rad_on then return end
-  local sw,sh=scr(); local rsz=cfg.rad_size; local rng=cfg.rad_range
-  local rx=sw*(cfg.rad_x/100)-rsz*0.5; local ry=sh*(cfg.rad_y/100); local al=cfg.rad_alpha/100
-  draw.RectFilled(rx,ry,rsz,rsz,{0,0,0,0.55*al},6); draw.Rect(rx,ry,rsz,rsz,{1,1,1,0.1*al},6,1)
-  local cx=rx+rsz*0.5; local cy=ry+rsz*0.5
-  draw.Line(cx,ry+2,cx,ry+rsz-2,{1,1,1,0.08*al},1); draw.Line(rx+2,cy,rx+rsz-2,cy,{1,1,1,0.08*al},1)
-  draw.CircleFilled(cx,cy,3,{0.3,1,0.5,al},10)
-  local look=camera.GetLookVector(); local cam=camera.GetPosition(); if not look or not cam then return end
-  -- project into the camera's horizontal frame using the engine's own right
-  -- vector, the same one offscreen_dir uses: (-look.Z, 0, look.X). deriving it
-  -- matters - assuming the opposite handedness mirrors the whole radar, so a
-  -- target you are looking straight at sits off to one side.
-  local fx,fz=look.X,look.Z
-  local fl=math.sqrt(fx*fx+fz*fz); if fl<1e-6 then fl=1 end fx,fz=fx/fl,fz/fl
-  local rtx,rtz=-fz,fx
-  for _,p in ipairs(vm_players) do
-    -- team check. the radar was drawing every entry in vm_players in enemy red,
-    -- so a teammate showed up as a hostile contact - the one overlay where
-    -- "who is on my side" was unanswerable. p.friend is the same flag the
-    -- player ESP filters on, so the two now agree on who is who.
-    --
-    -- defaulting ON: the rest of the file treats "Team Check" as opt-in
-    -- filtering (aim_team and silent_team both default true) and spells the
-    -- inverted sense as "Show Teammates", which is esp_team. this panel uses
-    -- the opt-in name so it reads like its two siblings.
-    if not (cfg.rad_team and p.friend) then
-      local head=p.bones.head or p.bones.torso
-      if head then
-        local dx=head.x-cam.X; local dz=head.z-cam.Z
-        local dist=math.sqrt(dx*dx+dz*dz)
-        if dist<=rng then
-          local fwd=dx*fx+dz*fz
-          local side=dx*rtx+dz*rtz
-          local px=cx+side*(rsz*0.5-6)/rng
-          local py=cy-fwd*(rsz*0.5-6)/rng
-          -- a teammate shown because Team Check is off is dimmed and drawn
-          -- hollow-ish rather than in the enemy red, so "on screen" never
-          -- reads as "hostile"
-          local c=col.c_enemy
-          local ca=al
-          if p.friend then
-            c=col.c_util; ca=al*0.55
-          end
-          draw.CircleFilled(px,py,3,{c[1],c[2],c[3],ca},8)
-        end
-      end
+  local sw,sh=scr()
+  local rsz=cfg.rad_size or 160
+  local rng=math.max(0.5,cfg.rad_range or 180)
+  local al=clamp((cfg.rad_alpha or 80)/100,0,1)
+  local rx=clamp(sw*(cfg.rad_x or 88)/100-rsz*0.5,0,math.max(0,sw-rsz))
+  local ry=clamp(sh*(cfg.rad_y or 8)/100,0,math.max(0,sh-rsz))
+  local cx,cy=rx+rsz*0.5,ry+rsz*0.5
+  draw.RectFilled(rx-2,ry-2,rsz+4,rsz+4,{0,0,0,0.55*al},8)
+  draw.Rect(rx-2,ry-2,rsz+4,rsz+4,{1,1,1,0.10*al},8,1)
+  for i=1,3 do draw.Circle(cx,cy,(rsz*0.5-3)*i/3,{1,1,1,0.07*al},40,1) end
+  draw.Line(cx,ry+4,cx,ry+rsz-4,{1,1,1,0.07*al},1)
+  draw.Line(rx+4,cy,rx+rsz-4,cy,{1,1,1,0.07*al},1)
+  draw.CircleFilled(cx,cy,2.6,{0.3,1,0.55,al},10)
+  -- rotate the world into the camera's horizontal frame: forward = look.XZ,
+  -- right = (-look.Z, look.X). deriving it this way keeps the radar from being
+  -- mirrored, so a target straight ahead sits at the top of the panel.
+  local look=camera.GetLookVector()
+  if not look then return end
+  local fx,fz=look.X or 0,look.Z or 0
+  local fl=math.sqrt(fx*fx+fz*fz); if fl<1e-6 then fl=1 end
+  fx,fz=fx/fl,fz/fl
+  local R=rad_s
+  R.rx,R.rsz,R.rng,R.al=rx,rsz,rng,al
+  R.cx,R.cy=cx,cy
+  R.fx,R.fz=fx,fz
+  R.rtx,R.rtz=-fz,fx
+  -- distance labels are measured from the player, not the camera, so third
+  -- person or freecam does not shift the readout. Fall back to the camera when
+  -- the local player has no head position yet.
+  local o=shoot_origin()
+  if not o then o=camera.GetPosition() end
+  if not o then return end
+  R.ox,R.oy,R.oz=o.X,o.Y,o.Z
+  -- name -> live player object, used only for the facing tick. Rebuilt in place
+  -- (never a fresh table) so the radar does not churn garbage every frame.
+  for k in pairs(R.pmap) do R.pmap[k]=nil end
+  if entity.GetPlayers then
+    local ok,plist=pcall(entity.GetPlayers)
+    if ok and plist then
+      for _,ep in ipairs(plist) do if ep.Name then R.pmap[ep.Name]=ep end end
     end
   end
-  draw.Text(rx+4,ry+rsz-13,"RADAR",{1,1,1,0.4*al},9)
+  for idx,p in ipairs(vm_players) do pcall(rad_one,p,idx,R) end
+  draw.Text(rx+6,ry+rsz-14,"RADAR",{1,1,1,0.35*al},9)
 end
 
 local function run_alert()
@@ -2365,61 +2530,68 @@ local function run_hud()
       or (up<3600 and string.format("%dm",math.floor(up/60)))
       or string.format("%dh%02dm",math.floor(up/3600),math.floor((up%3600)/60))
     local ft=string.format("%d FPS",fps)
-    local lw=ts("Ego",14); local fw=ts(ft,11); local uw=ts(ut,11)
-    local pw=14+lw+9+1+11+fw+9+uw+14; local ph=30
-    local mp=hud_pos.mark
-    local wx=mp and mp.x or (sw-pw-16); local wy=mp and mp.y or 14
-    if wx+pw>sw then wx=sw-pw end; if wy+ph>sh then wy=sh-ph end
-    -- draggable like the keybind list: grab the panel itself while the menu is
-    -- open, because with the menu closed every click belongs to the game.
-    if ui.open and inside(wx,wy,pw,ph) and ui.m.click and not ui.drag then
-      hud_pos.mark={x=wx,y=wy}
+    -- product line sits between the wordmark and the counters, exactly like the
+    -- menu's top-bar lockup: "Ego <diamond> Operation One | FPS | uptime"
+    local lw=ts("Ego",14); local pw2=ts("Operation One",11)
+    local fw=ts(ft,11); local uw=ts(ut,11)
+    local ph=30
+    local pw=14+lw+5+8+6+pw2+10+1+10+fw+10+uw+14
+    local wx=(cfg.hud_mark_x or -1)>=0 and cfg.hud_mark_x or (sw-pw-16)
+    local wy=(cfg.hud_mark_y or -1)>=0 and cfg.hud_mark_y or 14
+    wx=clamp(wx,0,math.max(0,sw-pw)); wy=clamp(wy,0,math.max(0,sh-ph))
+    -- drag from anywhere on the panel, menu open or closed, and the spot is
+    -- written straight into the profile so it survives a reload.
+    if inside(wx,wy,pw,ph) and ui.m.click and not ui.drag and not ui.picker then
       ui.drag={k="hud_mark",ox=ui.m.x-wx,oy=ui.m.y-wy}; ui.m.click=false
     end
     hud_panel(wx,wy,pw,ph,apm,3)
-    if ui.open then
-      local mgx,mgy=wx+pw-14,wy+2
-      for r=0,1 do for cc=0,1 do draw.RectFilled(mgx+cc*4,mgy+r*4,1.6,1.6,a(theme.faint,0.9*apm),0) end end
-    end
-    -- wordmark followed by the menu's accent diamond
+    local mgx,mgy=wx+pw-14,wy+2
+    for r=0,1 do for cc=0,1 do draw.RectFilled(mgx+cc*4,mgy+r*4,1.6,1.6,a(theme.faint,0.9*apm),0) end end
+    -- wordmark, accent diamond and product line: the top bar lockup, compact
     tmid(wx+14,wy,ph,"Ego", a(theme.text,1), 14)
-    local dx,dy=wx+14+lw+9,wy+ph*0.5
-    pcall(draw.PolyFilled, {{dx,dy-4},{dx+4,dy},{dx,dy+4},{dx-4,dy}}, a(theme.accent,1))
+    local dcx,dcy=wx+14+lw+5+4, wy+ph*0.5
+    if draw.PolyFilled then pcall(draw.PolyFilled, {{dcx,dcy-4},{dcx+4,dcy},{dcx,dcy+4},{dcx-4,dcy}}, a(theme.accent,1))
+    else draw.RectFilled(dcx-3,dcy-3,6,6, a(theme.accent,1), 1) end
+    local px=dcx+4+6
+    tmid(px,wy,ph,"Operation One", a(theme.sub,1), 11)
     -- hairline divider, then the live counters
-    local gx=wx+14+lw+21
+    local gx=px+pw2+10
     draw.Line(gx,wy+8,gx,wy+ph-8, a(theme.line,0.6*apm), 1)
     local tx=gx+11
     local fc = fps>=100 and theme.ok or (fps>=45 and theme.text or theme.bad)
     tmid(tx,wy,ph,ft, a(fc,1), 11)
-    tmid(tx+fw+9,wy,ph,ut, a(theme.faint,1), 11)
+    tmid(tx+fw+10,wy,ph,ut, a(theme.faint,1), 11)
   end
 
   -- -------------------------------------------------------- keybind list
   if apk>0.01 then
     local rows={}
     local function add(id,lb,en) if en and (bind[id] or 0)~=0 then rows[#rows+1]={lb,vkname(bind[id])} end end
-    add("aim_key","Aimbot",cfg.aim_on)
-    add("aim_toggle","Aim Toggle",cfg.aim_on)
-    add("silent_key","Silent",cfg.silent_on)
-    add("silent_toggle","Silent Toggle",cfg.silent_on)
+    add("aim_key","Aimbot",cfg.aim_mode~=2 and cfg.aim_on)
+    add("aim_toggle","Aim Toggle",cfg.aim_mode~=2 and cfg.aim_on)
+    add("silent_key","Silent",cfg.aim_mode==2 and cfg.silent_on)
+    add("silent_toggle","Silent Toggle",cfg.aim_mode==2 and cfg.silent_on)
     add("esp_toggle","ESP Toggle",cfg.esp_on)
     add("menu_key","Menu",true)
     if #rows>0 then
       local rh=21; local pw=168; local ph=40+#rows*rh
-      local kx=hud_keys_pos.x; local ky=hud_keys_pos.y
-      local grab=ui.open
-      if grab and inside(kx,ky,pw,ph) and ui.m.click and not ui.drag then
+      local kx=(cfg.hud_keys_x or -1)>=0 and cfg.hud_keys_x or (sw-pw-16)
+      -- bottom-right by default: the watermark owns the top-right corner and
+      -- the radar anchors there too, so the list would sit on top of both
+      local ky=(cfg.hud_keys_y or -1)>=0 and cfg.hud_keys_y or (sh-ph-18)
+      kx=clamp(kx,0,math.max(0,sw-pw)); ky=clamp(ky,0,math.max(0,sh-ph))
+      -- same grab rule as the watermark: any press on the panel drags it,
+      -- menu open or closed
+      if inside(kx,ky,pw,ph) and ui.m.click and not ui.drag and not ui.picker then
         ui.drag={k="hud_keys",ox=ui.m.x-kx,oy=ui.m.y-ky}; ui.m.click=false
       end
       hud_panel(kx,ky,pw,ph,apk,4)
-      hud_head(kx+13,ky+11,pw-26-(grab and 13 or 0),"01","Keybinds")
-      -- drag grip, shown only when the menu can actually pick the panel up
-      if grab then
-        local gx=kx+pw-16; local gy=ky+14
-        for r=0,1 do for c=0,1 do
-          draw.RectFilled(gx+c*4, gy+r*4, 1.6,1.6, a(theme.faint,0.9*apk), 0)
-        end end
-      end
+      hud_head(kx+13,ky+11,pw-26-13,"01","Keybinds")
+      -- drag grip
+      local gx=kx+pw-16; local gy=ky+14
+      for r=0,1 do for c=0,1 do
+        draw.RectFilled(gx+c*4, gy+r*4, 1.6,1.6, a(theme.faint,0.9*apk), 0)
+      end end
       for i,r in ipairs(rows) do
         local ry=ky+32+(i-1)*rh
         if i%2==0 then draw.RectFilled(kx+9,ry,pw-18,rh, {1,1,1,0.022*apk}, 0) end
@@ -2438,24 +2610,23 @@ local function run_hud()
   if apb>0.01 then
     local feats={}
     local function addf(id,lb) if cfg[id] then feats[#feats+1]=lb end end
-    addf("aim_on","AIM"); addf("silent_on","SILENT"); addf("esp_on","ESP")
+    if cfg.aim_mode==2 then addf("silent_on","SILENT") else addf("aim_on","AIM") end
+    addf("esp_on","ESP")
     addf("obj_on","OBJ"); addf("rad_on","RADAR")
     if #feats>0 then
       local pw=48; local gap=7; local pad=16
       local tot=#feats*pw+(#feats-1)*gap+pad*2
-      local ph=34; local bp=hud_pos.bar
-      local bx=bp and bp.x or (sw*0.5-tot*0.5); local by=bp and bp.y or (sh-ph-18)
-      if bx+tot>sw then bx=sw-tot end; if bx<0 then bx=0 end
-      if by+ph>sh then by=sh-ph end
-      if ui.open and inside(bx,by,tot,ph) and ui.m.click and not ui.drag then
-        hud_pos.bar={x=bx,y=by}
+      local ph=34
+      local bx=(cfg.hud_bar_x or -1)>=0 and cfg.hud_bar_x or (sw*0.5-tot*0.5)
+      local by=(cfg.hud_bar_y or -1)>=0 and cfg.hud_bar_y or (sh-ph-18)
+      bx=clamp(bx,0,math.max(0,sw-tot)); by=clamp(by,0,math.max(0,sh-ph))
+      -- and the feature bar follows the same rule: any press drags it
+      if inside(bx,by,tot,ph) and ui.m.click and not ui.drag and not ui.picker then
         ui.drag={k="hud_bar",ox=ui.m.x-bx,oy=ui.m.y-by}; ui.m.click=false
       end
       hud_panel(bx,by,tot,ph,apb,4)
-      if ui.open then
-        local bgx,bgy=bx+tot-14,by+2
-        for r=0,1 do for cc=0,1 do draw.RectFilled(bgx+cc*4,bgy+r*4,1.6,1.6,a(theme.faint,0.9*apb),0) end end
-      end
+      local bgx,bgy=bx+tot-14,by+2
+      for r=0,1 do for cc=0,1 do draw.RectFilled(bgx+cc*4,bgy+r*4,1.6,1.6,a(theme.faint,0.9*apb),0) end end
       local e=mix(theme.accent,theme.accent2,0.5)
       draw.RectFilled(bx+pad-2,by+ph-2,tot-(pad-2)*2,2, {e[1],e[2],e[3],0.9*apb}, 1)
       for i,lb in ipairs(feats) do
@@ -2470,8 +2641,16 @@ local function run_hud()
       end
     end
   end
-end
 
+  -- Deferred whole-window grab queued by draw_menu. The three panels above draw
+  -- on top of the window and claim the press first (each clears ui.m.click when
+  -- it takes it), so this only fires when the click landed on the menu itself.
+  local g=ui.win_grab
+  ui.win_grab=nil
+  if g and ui.m.click and not ui.drag and not ui.picker then
+    ui.drag={k="win",ox=g.ox,oy=g.oy}; ui.m.click=false
+  end
+end
 local SILENT_BONE={"head","torso","hip1","arm1","leg1","head"}
 local silent_hook=false
 local silent_track=nil
@@ -2511,7 +2690,7 @@ local function silent_enable()
   return silent_hook
 end
 local function run_silent()
-  if not cfg.silent_on then
+  if cfg.aim_mode~=2 or not cfg.silent_on then
     if silent_hook then silent_release(); if R_disable then pcall(R_disable) end; silent_hook=false end
     silent_bone_lock=nil; silent_target=nil
     return
@@ -2953,6 +3132,10 @@ local function cfg_reset()
     elseif it.t=="bind" then bind[it.id]=it.default or 0
     elseif it.t=="color" then col[it.id]={DEF_COL[it.id][1],DEF_COL[it.id][2],DEF_COL[it.id][3],DEF_COL[it.id][4]} end
   end end end
+  -- HUD panels go back to their anchored corners on a reset
+  cfg.hud_mark_x,cfg.hud_mark_y=-1,-1
+  cfg.hud_keys_x,cfg.hud_keys_y=-1,-1
+  cfg.hud_bar_x,cfg.hud_bar_y=-1,-1
   cfg_dirty=true
   pcall(function() notify.Success("Defaults restored","",3) end)
 end
@@ -3001,10 +3184,13 @@ function OnFrame()
   pcall(run_radar)
   pcall(run_alert)
   pcall(run_crosshair)
-  pcall(run_hud)
   ui.appear=approach("appear", ui.open and 1 or 0, 14)
   if ui.appear>0.01 then pcall(draw_menu) end
   theme.opacity=1
+  -- HUD runs after the menu so its panels draw on top of the window and get
+  -- first claim on a press; the deferred ui.win_grab handoff at the end of
+  -- run_hud then lets an empty-space click drag the whole window.
+  pcall(run_hud)
   -- debounced autosave: any widget that touches a setting flags the profile
   -- dirty and it is written out at most once a second.
   if cfg_dirty and cfg.cfg_auto then
